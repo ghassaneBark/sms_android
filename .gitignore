@@ -1,0 +1,19 @@
+*.iml
+.gradle
+/.idea
+/local.properties
+.DS_Store
+/build
+**/build/
+/captures
+.externalNativeBuild
+.cxx
+/app/release
+*.apk
+*.aab
+*.keystore
+*.jks
+google-services.json
+# Secrets Firebase / Google Cloud
+cle_firebase.json
+**/cle_firebase.json
