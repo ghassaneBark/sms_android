@@ -144,6 +144,13 @@ private fun DossierCard(dossier: Dossier, onClick: () -> Unit) {
                 EtatChip(etat = dossier.etat)
             }
 
+            etapeReparationLabel(dossier.etat)?.let { etape ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(etape, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
             dossier.assure?.let { assure ->
                 val nom = listOfNotNull(assure.nom, assure.prenom).joinToString(" ").ifBlank { "-" }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -170,6 +177,13 @@ private fun DossierCard(dossier: Dossier, onClick: () -> Unit) {
             }
         }
     }
+}
+
+private fun etapeReparationLabel(etat: String?): String? = when (etat) {
+    "AFFECTATION_AGENT_TERRAIN" -> "Avant réparation"
+    "ATTENTE_EXPERTISE_SR" -> "En cours de réparation"
+    "ATTENTE_FIN_REPARATION", "ATTENTE_PHOTO_FIN_REPARATION" -> "Après réparation"
+    else -> null
 }
 
 @Composable

@@ -25,7 +25,24 @@ data class Dossier(
     val vehiculeAssure: Vehicule?,
     val agentTerrainUserId: String?,
     val assignedUserId: String?,
+    val antenne: AntenneRef?,
     val documents: List<DocumentSinistre>?
+)
+
+data class AntenneRef(
+    val id: Long?
+)
+
+data class AgentTerrainUser(
+    val id: String,
+    val username: String?,
+    val nom: String?,
+    val prenom: String?,
+    val email: String?
+)
+
+data class ReassignAgentTerrainRequest(
+    val newAgentTerrainUserId: String
 )
 
 data class Assure(
@@ -46,7 +63,8 @@ data class Vehicule(
     val immatriculation: String?,
     val marque: String?,
     val modele: String?,
-    val usage: String?
+    val usage: String?,
+    val adresse: String?
 )
 
 data class DocumentSinistre(

@@ -2,16 +2,24 @@ package com.ma.sms.android.ui.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ma.sms.android.data.model.AgentTerrainUser
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.repository.DossierRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
+
+private const val MAX_CONCURRENT_PHOTO_UPLOADS = 4
 
 data class PendingPhoto(
     val file: File,
@@ -27,7 +35,10 @@ data class DossierDetailUiState(
     val isAdvancing: Boolean = false,
     val error: String? = null,
     val uploadSuccess: String? = null,
-    val lastValidDevis: Devis? = null
+    val lastValidDevis: Devis? = null,
+    val agentTerrainUsers: List<AgentTerrainUser> = emptyList(),
+    val isLoadingAgentTerrainUsers: Boolean = false,
+    val isReassigning: Boolean = false
 )
 
 class DossierDetailViewModel(
@@ -90,18 +101,22 @@ class DossierDetailViewModel(
         _uiState.value = _uiState.value.copy(pendingPhotos = current)
     }
 
-    // Upload de toutes les photos en attente
+    // Upload de toutes les photos en attente, en parallele (concurrence limitee)
     fun validateAndUpload() {
         val pending = _uiState.value.pendingPhotos
         if (pending.isEmpty()) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploading = true, error = null)
-            var failed = 0
-            pending.forEach { photo ->
-                repository.uploadPhoto(dossierId, photo.file, photo.docType)
-                    .onSuccess { photo.file.delete() }
-                    .onFailure { failed++ }
-            }
+            val semaphore = Semaphore(MAX_CONCURRENT_PHOTO_UPLOADS)
+            val results = pending.map { photo ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit {
+                        repository.uploadPhoto(dossierId, photo.file, photo.docType)
+                            .onSuccess { photo.file.delete() }
+                    }
+                }
+            }.awaitAll()
+            val failed = results.count { it.isFailure }
             if (failed == 0) {
                 _uiState.value = _uiState.value.copy(
                     isUploading = false,
@@ -141,6 +156,42 @@ class DossierDetailViewModel(
                         isAdvancing = false,
                         error = msg
                     )
+                }
+        }
+    }
+
+    // Charge la liste des agents terrain de l'antenne du dossier (pour le selecteur de reaffectation)
+    fun loadAgentTerrainUsers() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingAgentTerrainUsers = true)
+            repository.getAgentTerrainUsers(_uiState.value.dossier?.antenne?.id)
+                .onSuccess { users ->
+                    _uiState.value = _uiState.value.copy(
+                        agentTerrainUsers = users,
+                        isLoadingAgentTerrainUsers = false
+                    )
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        isLoadingAgentTerrainUsers = false,
+                        error = "Impossible de charger la liste des agents terrain."
+                    )
+                }
+        }
+    }
+
+    fun reassignAgentTerrain(newAgentTerrainUserId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isReassigning = true, error = null)
+            repository.reassignAgentTerrain(dossierId, newAgentTerrainUserId)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(isReassigning = false)
+                    _navigateBack.emit(Unit)
+                }
+                .onFailure {
+                    val msg = it.message?.takeIf { m -> m.isNotBlank() }
+                        ?: "Impossible de réaffecter le dossier."
+                    _uiState.value = _uiState.value.copy(isReassigning = false, error = msg)
                 }
         }
     }

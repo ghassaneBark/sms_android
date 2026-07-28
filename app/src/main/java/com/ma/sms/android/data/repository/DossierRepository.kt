@@ -3,9 +3,11 @@ package com.ma.sms.android.data.repository
 import android.content.Context
 import android.net.Uri
 import com.ma.sms.android.data.api.ApiService
+import com.ma.sms.android.data.model.AgentTerrainUser
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -57,10 +59,34 @@ class DossierRepository(private val api: ApiService, private val context: Contex
         .replace("à", "a").replace("â", "a")
 
     private fun compressImage(file: File): File {
-        val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return file
+        val maxDimension = 1600
+
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return file
+
+        var sampleSize = 1
+        while (bounds.outWidth / (sampleSize * 2) >= maxDimension || bounds.outHeight / (sampleSize * 2) >= maxDimension) {
+            sampleSize *= 2
+        }
+
+        val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options) ?: return file
+
+        val scale = maxDimension.toFloat() / maxOf(decoded.width, decoded.height)
+        val bitmap = if (scale < 1f) {
+            val scaled = android.graphics.Bitmap.createScaledBitmap(
+                decoded, (decoded.width * scale).toInt(), (decoded.height * scale).toInt(), true
+            )
+            if (scaled !== decoded) decoded.recycle()
+            scaled
+        } else {
+            decoded
+        }
+
         val compressed = File(file.parent, "compressed_${file.name}")
         compressed.outputStream().use { out ->
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, out)
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
         }
         bitmap.recycle()
         return compressed
@@ -73,6 +99,18 @@ class DossierRepository(private val api: ApiService, private val context: Contex
 
     suspend fun advanceState(dossierId: Long): Result<Dossier> = runCatching {
         api.advanceState(dossierId)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun getAgentTerrainUsers(antenneId: Long?): Result<List<AgentTerrainUser>> = runCatching {
+        api.getAgentTerrainUsers(antenneId)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun reassignAgentTerrain(dossierId: Long, newAgentTerrainUserId: String): Result<Dossier> = runCatching {
+        api.reassignAgentTerrain(dossierId, ReassignAgentTerrainRequest(newAgentTerrainUserId))
     }.recoverCatching { throwable ->
         throw extractBusinessMessageOrRethrow(throwable)
     }
