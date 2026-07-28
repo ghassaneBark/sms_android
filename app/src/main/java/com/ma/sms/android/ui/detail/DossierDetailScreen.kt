@@ -400,7 +400,8 @@ fun DossierDetailScreen(
                         }
 
                         // Bouton Réaffecter à un autre agent terrain
-                        if (etat == "AFFECTATION_AGENT_TERRAIN") {
+                        // Disponible pendant les 3 phases agent terrain : avant/en cours/apres reparation
+                        if (etat == "AFFECTATION_AGENT_TERRAIN" || etat == "ATTENTE_EXPERTISE_SR" || etat == "ATTENTE_PHOTO_FIN_REPARATION") {
                             OutlinedButton(
                                 onClick = {
                                     vm.loadAgentTerrainUsers()

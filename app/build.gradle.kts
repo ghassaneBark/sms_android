@@ -13,8 +13,8 @@ android {
         applicationId = "com.ma.sms.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.1.14"
+        versionCode = 18
+        versionName = "1.1.16"
         manifestPlaceholders["appAuthRedirectScheme"] = "com.ma.sms.android"
     }
 
