@@ -2,7 +2,6 @@ package com.ma.sms.android.ui.detail
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -22,7 +21,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.rememberAsyncImagePainter
@@ -43,9 +41,14 @@ val VEHICLE_ANGLES = listOf(
     VehicleAngle("Latérale droite", required = true),
     VehicleAngle("Latérale gauche", required = true),
     VehicleAngle("Face arrière",    required = true),
+    VehicleAngle("Arrière droit",   required = true),
+    VehicleAngle("Arrière gauche",  required = true),
     VehicleAngle("Tableau de bord", required = true),
-    VehicleAngle("Dommages",        required = false)
+    VehicleAngle("N°CHAS",         required = true),
+    VehicleAngle("Intérieur",       required = true)
 )
+
+const val EXTRA_VEHICLE_PHOTO_PREFIX = "Photos vehicules - Photo supplementaire"
 
 // Type de document angle selon l'état
 fun angleDocTypeForState(angle: VehicleAngle, etat: String?): String = when (etat) {
@@ -107,6 +110,15 @@ private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
     else -> OTHER_DOC_TYPES
 }
 
+// Libelle court affiche sur l'ecran de capture pour un docType donne
+private fun cameraDisplayLabel(docType: String, etat: String?): String {
+    VEHICLE_ANGLES.forEach { angle ->
+        if (angleDocTypeForState(angle, etat) == docType) return angle.label
+    }
+    if (docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) return "Photo supplémentaire véhicule"
+    return docType
+}
+
 // --- Écran principal ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,23 +135,50 @@ fun DossierDetailScreen(
         }
     })
     val state by vm.uiState.collectAsState()
-    var photoFile by remember { mutableStateOf<File?>(null) }
-    var selectedDocType by remember { mutableStateOf("") }
     var showFinMissionDialog by remember { mutableStateOf(false) }
+    var showContinueExtraPhotoDialog by remember { mutableStateOf(false) }
+    var showReassignDialog by remember { mutableStateOf(false) }
 
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) photoFile?.let { vm.addPendingPhoto(it, selectedDocType) }
+    // File d'attente de captures pour l'ecran camera integre (CameraX) :
+    // permet d'enchainer plusieurs photos sans quitter l'ecran de l'appli.
+    var showCameraScreen by remember { mutableStateOf(false) }
+    var cameraQueue by remember { mutableStateOf<List<String>>(emptyList()) }
+    var cameraQueueIndex by remember { mutableStateOf(0) }
+    var pendingCameraQueue by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    fun openCameraQueue(queue: List<String>) {
+        if (queue.isEmpty()) return
+        cameraQueue = queue
+        cameraQueueIndex = 0
+        showCameraScreen = true
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) launchCameraInternal(context, selectedDocType, onFile = { photoFile = it }, cameraLauncher)
+        if (granted) openCameraQueue(pendingCameraQueue)
         else vm.showError("Permission caméra refusée.")
     }
 
     fun launchCamera(docType: String) {
-        selectedDocType = docType
+        val currentEtat = state.dossier?.etat
+        // Si l'angle tape fait partie des angles vehicule requis, on enchaine
+        // directement sur tous les angles encore manquants dans la meme session.
+        val tappedAngle = VEHICLE_ANGLES.find { angleDocTypeForState(it, currentEtat) == docType }
+        val queue = if (tappedAngle != null) {
+            val missing = VEHICLE_ANGLES.filter { angle ->
+                angle.required
+                    && !isAngleUploadedForState(angle, currentEtat, state.documents)
+                    && state.pendingPhotos.none { it.docType == angleDocTypeForState(angle, currentEtat) }
+            }
+            (listOf(tappedAngle) + missing.filter { it != tappedAngle })
+                .distinct()
+                .map { angleDocTypeForState(it, currentEtat) }
+        } else {
+            listOf(docType)
+        }
+
+        pendingCameraQueue = queue
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            launchCameraInternal(context, docType, onFile = { photoFile = it }, cameraLauncher)
+            openCameraQueue(queue)
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -168,6 +207,83 @@ fun DossierDetailScreen(
             },
             dismissButton = { TextButton(onClick = { showFinMissionDialog = false }) { Text("Annuler") } }
         )
+    }
+
+    if (showReassignDialog) {
+        AlertDialog(
+            onDismissRequest = { showReassignDialog = false },
+            title = { Text("Réaffecter à un autre agent terrain") },
+            text = {
+                when {
+                    state.isLoadingAgentTerrainUsers -> Box(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+                    state.agentTerrainUsers.isEmpty() -> Text("Aucun autre agent terrain disponible.")
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        state.agentTerrainUsers
+                            .filter { it.id != state.dossier?.agentTerrainUserId }
+                            .forEach { agent ->
+                                TextButton(
+                                    onClick = {
+                                        showReassignDialog = false
+                                        vm.reassignAgentTerrain(agent.id)
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        listOfNotNull(agent.prenom, agent.nom).joinToString(" ").ifBlank { agent.username ?: agent.id },
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showReassignDialog = false }) { Text("Annuler") }
+            }
+        )
+    }
+
+    if (showContinueExtraPhotoDialog) {
+        AlertDialog(
+            onDismissRequest = { showContinueExtraPhotoDialog = false },
+            title = { Text("Photo ajoutée") },
+            text = { Text("Prendre une autre photo supplémentaire ?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showContinueExtraPhotoDialog = false
+                    cameraQueue = cameraQueue + "$EXTRA_VEHICLE_PHOTO_PREFIX ${System.currentTimeMillis()}"
+                    cameraQueueIndex = cameraQueue.lastIndex
+                    showCameraScreen = true
+                }) {
+                    Text("Oui", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showContinueExtraPhotoDialog = false; showCameraScreen = false }) { Text("Non") }
+            }
+        )
+    }
+
+    if (showCameraScreen && cameraQueue.isNotEmpty()) {
+        CameraCaptureScreen(
+            title = cameraDisplayLabel(cameraQueue[cameraQueueIndex], state.dossier?.etat),
+            subtitle = if (cameraQueue.size > 1) "${cameraQueueIndex + 1} / ${cameraQueue.size}" else null,
+            onCapture = { file ->
+                val docType = cameraQueue[cameraQueueIndex]
+                vm.addPendingPhoto(file, docType)
+                when {
+                    cameraQueueIndex < cameraQueue.lastIndex -> cameraQueueIndex++
+                    docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) -> showContinueExtraPhotoDialog = true
+                    else -> showCameraScreen = false
+                }
+            },
+            onClose = { showCameraScreen = false }
+        )
+        return
     }
 
     Scaffold(
@@ -226,6 +342,14 @@ fun DossierDetailScreen(
                             onTakePhoto = { docType -> launchCamera(docType) }
                         )
 
+                        ExtraVehiclePhotosCard(
+                            documents = state.documents,
+                            pendingPhotos = state.pendingPhotos,
+                            onTakePhoto = { docType -> launchCamera(docType) },
+                            onDeleteDocument = { docId -> vm.deleteDocument(docId) },
+                            onRemovePending = { index -> vm.removePendingPhoto(index) }
+                        )
+
                         OtherDocumentsCard(
                             documents = state.documents,
                             pendingPhotos = state.pendingPhotos,
@@ -271,6 +395,28 @@ fun DossierDetailScreen(
                                             Text("Valider")
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        // Bouton Réaffecter à un autre agent terrain
+                        if (etat == "AFFECTATION_AGENT_TERRAIN") {
+                            OutlinedButton(
+                                onClick = {
+                                    vm.loadAgentTerrainUsers()
+                                    showReassignDialog = true
+                                },
+                                enabled = !state.isReassigning,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (state.isReassigning) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Réaffectation...")
+                                } else {
+                                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Réaffecter à un autre agent terrain")
                                 }
                             }
                         }
@@ -417,6 +563,114 @@ private fun VehiclePhotosCard(
     }
 }
 
+// --- Card photos supplémentaires véhicule ---
+@Composable
+private fun ExtraVehiclePhotosCard(
+    documents: List<DocumentSinistre>,
+    pendingPhotos: List<PendingPhoto>,
+    onTakePhoto: (String) -> Unit,
+    onDeleteDocument: (Long) -> Unit,
+    onRemovePending: (Int) -> Unit
+) {
+    val uploadedExtras = documents.filter { it.type?.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) == true }
+    val pendingExtras = pendingPhotos.mapIndexedNotNull { i, p ->
+        if (p.docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) Pair(i, p) else null
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                SectionTitle("Photos supplémentaires")
+                OutlinedButton(
+                    onClick = { onTakePhoto("$EXTRA_VEHICLE_PHOTO_PREFIX ${System.currentTimeMillis()}") },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Ajouter", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            if (uploadedExtras.isEmpty() && pendingExtras.isEmpty()) {
+                Text(
+                    "Appuyez sur Ajouter pour prendre des photos supplémentaires (optionnel).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            pendingExtras.forEachIndexed { i, (index, pending) ->
+                if (i > 0 || uploadedExtras.isNotEmpty()) HorizontalDivider(thickness = 0.5.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Image(
+                        painter = rememberAsyncImagePainter(pending.file),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Photo supplémentaire ${uploadedExtras.size + i + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text("En attente d'envoi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                    }
+                    IconButton(onClick = { onRemovePending(index) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            uploadedExtras.forEachIndexed { i, doc ->
+                if (i > 0) HorizontalDivider(thickness = 0.5.dp)
+                var showConfirm by remember { mutableStateOf(false) }
+                if (showConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showConfirm = false },
+                        title = { Text("Supprimer") },
+                        text = { Text("Supprimer la photo supplémentaire ${i + 1} ?") },
+                        confirmButton = {
+                            TextButton(onClick = { showConfirm = false; doc.id?.let { onDeleteDocument(it) } }) {
+                                Text("Supprimer", color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("Annuler") } }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Photo supplémentaire ${i + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        doc.originalFileName?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
 // --- Card autres documents ---
 @Composable
 private fun OtherDocumentsCard(
@@ -428,10 +682,12 @@ private fun OtherDocumentsCard(
     onRemovePending: (Int) -> Unit
 ) {
     val uploadedOtherDocs = documents.filter { doc ->
-        VEHICLE_ANGLES.none { angle -> doc.type == angleDocType(angle) }
+        VEHICLE_ANGLES.none { angle -> doc.type == angleDocType(angle) } &&
+        doc.type?.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) != true
     }
     val pendingOtherPhotos = pendingPhotos.mapIndexedNotNull { index, p ->
-        if (VEHICLE_ANGLES.none { angle -> p.docType == angleDocType(angle) }) Pair(index, p) else null
+        if (VEHICLE_ANGLES.none { angle -> p.docType == angleDocType(angle) } &&
+            !p.docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) Pair(index, p) else null
     }
     var showJustificatifDialog by remember { mutableStateOf(false) }
 
@@ -526,19 +782,6 @@ private fun PendingPhotoRow(pending: PendingPhoto, onRemove: () -> Unit) {
     }
 }
 
-private fun launchCameraInternal(
-    context: android.content.Context,
-    docType: String,
-    onFile: (File) -> Unit,
-    launcher: androidx.activity.result.ActivityResultLauncher<Uri>
-) {
-    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    val file = File(context.cacheDir, "photo_${timestamp}.jpg")
-    onFile(file)
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-    launcher.launch(uri)
-}
-
 @Composable
 private fun DossierInfoCard(dossier: Dossier) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -580,6 +823,7 @@ private fun VehiculeCard(dossier: Dossier) {
             InfoRow("Marque", v.marque)
             InfoRow("Modèle", v.modele)
             InfoRow("Usage", v.usage)
+            InfoRow("Adresse véhicule", v.adresse)
         }
     }
 }

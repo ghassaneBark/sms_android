@@ -26,8 +26,11 @@ private val anglePositions = mapOf(
     "Latérale droite" to Pair(0.96f, 0.50f),
     "Latérale gauche" to Pair(0.04f, 0.50f),
     "Face arrière"    to Pair(0.50f, 0.95f),
-    "Tableau de bord" to Pair(0.50f, 0.35f),
-    "Dommages"        to Pair(0.50f, 0.62f)
+    "Arrière droit"   to Pair(0.87f, 0.82f),
+    "Arrière gauche"  to Pair(0.13f, 0.82f),
+    "Tableau de bord" to Pair(0.28f, 0.35f),
+    "N°CHAS"          to Pair(0.72f, 0.35f),
+    "Intérieur"       to Pair(0.50f, 0.62f)
 )
 
 private val HOTSPOT_SIZE = 36.dp
