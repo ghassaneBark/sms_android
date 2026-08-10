@@ -1,6 +1,7 @@
 package com.ma.sms.android.ui.detail
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -17,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ma.sms.android.R
 import com.ma.sms.android.data.model.DocumentSinistre
+import java.io.File
 
 // Positions des hotspots en fractions (x, y) du conteneur
 private val anglePositions = mapOf(
@@ -40,7 +42,9 @@ fun CarDiagramCard(
     etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,
-    onTakePhoto: (String) -> Unit
+    onTakePhoto: (String) -> Unit,
+    onViewDocument: (DocumentSinistre) -> Unit = {},
+    onViewPendingPhoto: (File) -> Unit = {}
 ) {
     val doneCount = VEHICLE_ANGLES.filter { it.required }.count { isAngleUploadedForState(it, etat, documents) }
     val totalRequired = VEHICLE_ANGLES.count { it.required }
@@ -77,7 +81,7 @@ fun CarDiagramCard(
             }
 
             Text(
-                "Appuyez sur un point pour prendre la photo de cet angle.",
+                "Appuyez sur un point pour prendre la photo de cet angle, ou sur son nom pour la consulter.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -109,7 +113,8 @@ fun CarDiagramCard(
                         val pos = anglePositions[angle.label] ?: return@forEach
                         val docType = angleDocTypeForState(angle, etat)
                         val isUploaded = isAngleUploadedForState(angle, etat, documents)
-                        val isPending = pendingPhotos.any { it.docType == docType }
+                        val pendingFile = pendingPhotos.firstOrNull { it.docType == docType }?.file
+                        val isPending = pendingFile != null
 
                         val x = containerWidth * pos.first - halfHotspot
                         val y = containerHeight * pos.second - halfHotspot
@@ -119,7 +124,13 @@ fun CarDiagramCard(
                             angle = angle,
                             isUploaded = isUploaded,
                             isPending = isPending,
-                            onClick = { onTakePhoto(docType) }
+                            onClick = { onTakePhoto(docType) },
+                            onView = {
+                                when {
+                                    pendingFile != null -> onViewPendingPhoto(pendingFile)
+                                    isUploaded -> findAngleDocument(angle, etat, documents)?.let { onViewDocument(it) }
+                                }
+                            }
                         )
                     }
                 }
@@ -145,8 +156,10 @@ private fun AngleHotspot(
     angle: VehicleAngle,
     isUploaded: Boolean,
     isPending: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onView: () -> Unit = {}
 ) {
+    val hasPhoto = isUploaded || isPending
     val bgColor = when {
         isUploaded -> MaterialTheme.colorScheme.primary
         isPending  -> MaterialTheme.colorScheme.secondary
@@ -183,9 +196,12 @@ private fun AngleHotspot(
             text = angle.label,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
             textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (hasPhoto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            textDecoration = if (hasPhoto) androidx.compose.ui.text.style.TextDecoration.Underline else null,
             maxLines = 1,
-            modifier = Modifier.width(HOTSPOT_SIZE + 20.dp)
+            modifier = Modifier
+                .width(HOTSPOT_SIZE + 20.dp)
+                .then(if (hasPhoto) Modifier.clickable(onClick = onView) else Modifier)
         )
     }
 }

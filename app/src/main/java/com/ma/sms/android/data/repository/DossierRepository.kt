@@ -121,6 +121,35 @@ class DossierRepository(private val api: ApiService, private val context: Contex
             .firstOrNull { d -> d.etat?.equals("VALIDE", ignoreCase = true) == true }
     }
 
+    /** Télécharge une pièce jointe en cache local et retourne une Uri consultable via FileProvider. */
+    suspend fun downloadDocument(dossierId: Long, documentId: Long, fileName: String): Result<Uri> = runCatching {
+        val response = api.downloadDocument(dossierId, documentId)
+        if (!response.isSuccessful) throw RuntimeException("Téléchargement impossible (${response.code()})")
+        val body = response.body() ?: throw RuntimeException("Fichier vide")
+        writeToCacheAndShare(body.byteStream(), fileName)
+    }
+
+    /** Télécharge le PDF "Accord sur devis" en cache local et retourne une Uri consultable via FileProvider. */
+    suspend fun downloadDevisPdf(devisId: Long): Result<Uri> = runCatching {
+        val response = api.downloadDevisPdf(devisId)
+        if (!response.isSuccessful) throw RuntimeException("Téléchargement impossible (${response.code()})")
+        val body = response.body() ?: throw RuntimeException("Fichier vide")
+        writeToCacheAndShare(body.byteStream(), "accord-sur-devis-$devisId.pdf")
+    }
+
+    /** Uri consultable (FileProvider) pour une photo pas encore envoyee, deja stockee localement. */
+    fun uriForLocalFile(file: File): Uri =
+        androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+
+    private fun writeToCacheAndShare(input: java.io.InputStream, fileName: String): Uri {
+        val downloadsDir = File(context.cacheDir, "downloads").apply { mkdirs() }
+        val file = File(downloadsDir, fileName)
+        input.use { stream ->
+            file.outputStream().use { out -> stream.copyTo(out) }
+        }
+        return androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+    }
+
     private fun extractBusinessMessageOrRethrow(t: Throwable): Throwable {
         val ex = t as? retrofit2.HttpException ?: return t
         val body = ex.response()?.errorBody()?.string()

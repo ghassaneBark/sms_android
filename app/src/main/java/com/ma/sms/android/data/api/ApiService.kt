@@ -60,4 +60,7 @@ interface ApiService {
         @Path("id") id: Long,
         @Path("documentId") documentId: Long
     ): Response<ResponseBody>
+
+    @GET("api/devis/{id}/pdf")
+    suspend fun downloadDevisPdf(@Path("id") id: Long): Response<ResponseBody>
 }

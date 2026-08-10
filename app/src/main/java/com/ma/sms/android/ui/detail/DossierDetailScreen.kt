@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 
 import androidx.compose.foundation.rememberScrollState
@@ -48,7 +49,85 @@ val VEHICLE_ANGLES = listOf(
     VehicleAngle("Intérieur",       required = true)
 )
 
-const val EXTRA_VEHICLE_PHOTO_PREFIX = "Photos vehicules - Photo supplementaire"
+private const val EXTRA_VEHICLE_PHOTO_MARKER = "Photo supplementaire"
+const val EXTRA_VEHICLE_PHOTO_PREFIX = "Photos vehicules - $EXTRA_VEHICLE_PHOTO_MARKER"
+
+// Type de document pour une photo supplementaire selon l'etat courant (avant/en cours/apres
+// reparation) : indispensable pour que le verrouillage cote backend (qui se base sur le type)
+// s'applique correctement une fois la phase passee.
+fun extraVehiclePhotoDocTypeForState(etat: String?): String = when (etat) {
+    "ATTENTE_EXPERTISE_SR"        -> "PHOTOS EN COURS DE REPARATION - $EXTRA_VEHICLE_PHOTO_MARKER"
+    "ATTENTE_PHOTO_FIN_REPARATION" -> "PHOTO APRES REPARATION - $EXTRA_VEHICLE_PHOTO_MARKER"
+    else                           -> EXTRA_VEHICLE_PHOTO_PREFIX
+}
+
+fun isExtraVehiclePhotoDocType(docType: String?): Boolean =
+    docType?.contains(EXTRA_VEHICLE_PHOTO_MARKER) == true
+
+// Phase agent terrain a laquelle appartient un type de document donne (miroir de la logique
+// cote backend DossierDocumentService.resolveAgentTerrainPhaseForDocumentType) : null si le
+// document n'est pas lie a une phase agent terrain particuliere (ex: Carte grise, Permis...).
+fun resolveAgentTerrainPhaseForDocType(docType: String?): String? {
+    val type = docType?.trim().orEmpty()
+    return when {
+        type.startsWith("PHOTO APRES REPARATION") -> "ATTENTE_PHOTO_FIN_REPARATION"
+        type.startsWith("PHOTOS EN COURS DE REPARATION") -> "ATTENTE_EXPERTISE_SR"
+        type.startsWith("Photos vehicules") -> "AFFECTATION_AGENT_TERRAIN"
+        else -> null
+    }
+}
+
+private val AGENT_TERRAIN_STATES = setOf(
+    "AFFECTATION_AGENT_TERRAIN",
+    "ATTENTE_EXPERTISE_SR",
+    "ATTENTE_PHOTO_FIN_REPARATION"
+)
+
+// En cours de reparation / apres reparation : on ne montre plus les pieces des phases
+// precedentes (photos avant reparation, permis, CIN, garantie, justificatifs, factures),
+// seules Carte grise et Attestation assurance restent visibles, en consultation uniquement.
+private val REPAIR_PHASE_STATES = setOf(
+    "ATTENTE_EXPERTISE_SR",
+    "ATTENTE_PHOTO_FIN_REPARATION"
+)
+
+private val CONSULTABLE_ONLY_DOC_TYPES_DURING_REPAIR = setOf(
+    "Carte grise",
+    "Attestation assurance"
+)
+
+// Autres pieces (non photos) typiquement fournies par l'agent terrain lors de sa mission.
+private val GENERAL_AGENT_TERRAIN_DOCUMENT_TYPES = setOf(
+    "Carte grise",
+    "Permis de conduite",
+    "CIN",
+    "Attestation assurance",
+    "Garantie",
+    "Constat amiable",
+    "Déclaration sur l'honneur",
+    "Déclaration des autorités de sécurité",
+    "Déclaration des autorités de sécurité - PV",
+    "Déclaration des autorités de sécurité - Récépissé"
+)
+
+// Verrouillage en suppression uniquement (l'ajout via uploadDocument n'est jamais bloque,
+// cf. DossierDocumentService cote backend : EN_ATTENTE_COMPLEMENT_DOCUMENT sert a completer
+// des pieces manquantes meme hors phase agent terrain).
+fun isDocTypeLockedForState(docType: String?, currentEtat: String?): Boolean {
+    val phase = resolveAgentTerrainPhaseForDocType(docType)
+    if (phase != null) {
+        return phase != currentEtat
+    }
+    // Carte grise / Attestation assurance : consultables uniquement (non modifiables) une fois
+    // en reparation ou apres reparation, meme si elles etaient encore editables juste avant.
+    if (docType?.trim() in CONSULTABLE_ONLY_DOC_TYPES_DURING_REPAIR && currentEtat in REPAIR_PHASE_STATES) {
+        return true
+    }
+    if (docType?.trim() in GENERAL_AGENT_TERRAIN_DOCUMENT_TYPES) {
+        return currentEtat !in AGENT_TERRAIN_STATES
+    }
+    return false
+}
 
 // Type de document angle selon l'état
 fun angleDocTypeForState(angle: VehicleAngle, etat: String?): String = when (etat) {
@@ -79,6 +158,12 @@ fun isAngleUploadedForState(angle: VehicleAngle, etat: String?, documents: List<
 fun allRequiredAnglesDoneForState(etat: String?, documents: List<DocumentSinistre>): Boolean =
     VEHICLE_ANGLES.filter { it.required }.all { isAngleUploadedForState(it, etat, documents) }
 
+// Document deja envoye correspondant a un angle donne, pour permettre sa consultation.
+fun findAngleDocument(angle: VehicleAngle, etat: String?, documents: List<DocumentSinistre>): DocumentSinistre? =
+    documents.firstOrNull { doc ->
+        (doc.originalFileName ?: doc.fileName ?: "").startsWith(angleFileKeyForState(angle, etat))
+    }
+
 // Garder les anciennes fonctions pour compatibilité CarDiagramCard
 fun angleDocType(angle: VehicleAngle) = angleDocTypeForState(angle, null)
 fun isAngleUploaded(angle: VehicleAngle, documents: List<DocumentSinistre>) =
@@ -104,9 +189,12 @@ private val JUSTIFICATIF_SUBTYPES = listOf(
 private val FACTURE_TYPES = listOf("FACTURE PC ORIGINAL", "FACTURE PC RECUPERATION")
 
 private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
-    "ATTENTE_EXPERTISE_SR" -> listOf("PHOTOS EN COURS DE REPARATION") + OTHER_DOC_TYPES
+    // En cours/apres reparation : la capture photo obligatoire de la phase se fait via le
+    // diagramme (CarDiagramCard) ; Carte grise/Assurance sont consultables uniquement, donc
+    // plus aucun bouton de capture generique n'est propose ici.
+    "ATTENTE_EXPERTISE_SR" -> emptyList()
+    "ATTENTE_PHOTO_FIN_REPARATION" -> emptyList()
     "ATTENTE_FIN_REPARATION" -> FACTURE_TYPES + OTHER_DOC_TYPES
-    "ATTENTE_PHOTO_FIN_REPARATION" -> listOf("PHOTO APRES REPARATION") + FACTURE_TYPES + OTHER_DOC_TYPES
     else -> OTHER_DOC_TYPES
 }
 
@@ -115,7 +203,7 @@ private fun cameraDisplayLabel(docType: String, etat: String?): String {
     VEHICLE_ANGLES.forEach { angle ->
         if (angleDocTypeForState(angle, etat) == docType) return angle.label
     }
-    if (docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) return "Photo supplémentaire véhicule"
+    if (isExtraVehiclePhotoDocType(docType)) return "Photo supplémentaire véhicule"
     return docType
 }
 
@@ -135,6 +223,24 @@ fun DossierDetailScreen(
         }
     })
     val state by vm.uiState.collectAsState()
+
+    // Ouvre le fichier telecharge (piece jointe ou PDF accord sur devis) dans la visionneuse
+    // systeme des qu'un telechargement aboutit.
+    LaunchedEffect(state.fileToOpen) {
+        val fileToOpen = state.fileToOpen ?: return@LaunchedEffect
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(fileToOpen.uri, fileToOpen.mimeType)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            vm.showError("Aucune application disponible pour ouvrir ce fichier.")
+        }
+        vm.fileOpenHandled()
+    }
+
     var showFinMissionDialog by remember { mutableStateOf(false) }
     var showContinueExtraPhotoDialog by remember { mutableStateOf(false) }
     var showReassignDialog by remember { mutableStateOf(false) }
@@ -255,7 +361,7 @@ fun DossierDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showContinueExtraPhotoDialog = false
-                    cameraQueue = cameraQueue + "$EXTRA_VEHICLE_PHOTO_PREFIX ${System.currentTimeMillis()}"
+                    cameraQueue = cameraQueue + "${extraVehiclePhotoDocTypeForState(state.dossier?.etat)} ${System.currentTimeMillis()}"
                     cameraQueueIndex = cameraQueue.lastIndex
                     showCameraScreen = true
                 }) {
@@ -277,7 +383,7 @@ fun DossierDetailScreen(
                 vm.addPendingPhoto(file, docType)
                 when {
                     cameraQueueIndex < cameraQueue.lastIndex -> cameraQueueIndex++
-                    docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) -> showContinueExtraPhotoDialog = true
+                    isExtraVehiclePhotoDocType(docType) -> showContinueExtraPhotoDialog = true
                     else -> showCameraScreen = false
                 }
             },
@@ -330,33 +436,49 @@ fun DossierDetailScreen(
                         AssureCard(dossier = state.dossier!!)
                         VehiculeCard(dossier = state.dossier!!)
 
-                        // En ATTENTE_EXPERTISE_SR : afficher le dernier devis VALIDE (version light)
-                        if (etat == "ATTENTE_EXPERTISE_SR" && state.lastValidDevis != null) {
-                            DevisLightCard(devis = state.lastValidDevis!!)
+                        // En cours/apres reparation : afficher le dernier devis VALIDE (accord
+                        // sur devis, version light et consultable) au lieu des pieces des
+                        // phases precedentes.
+                        if (etat in REPAIR_PHASE_STATES && state.lastValidDevis != null) {
+                            DevisLightCard(
+                                devis = state.lastValidDevis!!,
+                                onViewPdf = { vm.viewDevisPdf(state.lastValidDevis!!) }
+                            )
                         }
 
                         CarDiagramCard(
                             etat = etat,
                             documents = state.documents,
                             pendingPhotos = state.pendingPhotos,
-                            onTakePhoto = { docType -> launchCamera(docType) }
+                            onTakePhoto = { docType -> launchCamera(docType) },
+                            onViewDocument = { doc -> vm.viewDocument(doc) },
+                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
                         )
 
+                        // Photos supplementaires (optionnelles) : disponibles a chaque phase
+                        // (avant/en cours/apres reparation), filtrees pour ne montrer que celles
+                        // de la phase courante.
                         ExtraVehiclePhotosCard(
+                            etat = etat,
                             documents = state.documents,
                             pendingPhotos = state.pendingPhotos,
                             onTakePhoto = { docType -> launchCamera(docType) },
                             onDeleteDocument = { docId -> vm.deleteDocument(docId) },
-                            onRemovePending = { index -> vm.removePendingPhoto(index) }
+                            onRemovePending = { index -> vm.removePendingPhoto(index) },
+                            onViewDocument = { doc -> vm.viewDocument(doc) },
+                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
                         )
 
                         OtherDocumentsCard(
+                            etat = etat,
                             documents = state.documents,
                             pendingPhotos = state.pendingPhotos,
                             docTypes = extraDocTypesForEtat(state.dossier!!.etat),
                             onTakePhoto = { docType -> launchCamera(docType) },
                             onDeleteDocument = { docId -> vm.deleteDocument(docId) },
-                            onRemovePending = { index -> vm.removePendingPhoto(index) }
+                            onRemovePending = { index -> vm.removePendingPhoto(index) },
+                            onViewDocument = { doc -> vm.viewDocument(doc) },
+                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
                         )
 
                         // Angles manquants ou photo fin réparation manquante
@@ -567,15 +689,21 @@ private fun VehiclePhotosCard(
 // --- Card photos supplémentaires véhicule ---
 @Composable
 private fun ExtraVehiclePhotosCard(
+    etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,
     onTakePhoto: (String) -> Unit,
     onDeleteDocument: (Long) -> Unit,
-    onRemovePending: (Int) -> Unit
+    onRemovePending: (Int) -> Unit,
+    onViewDocument: (DocumentSinistre) -> Unit = {},
+    onViewPendingPhoto: (File) -> Unit = {}
 ) {
-    val uploadedExtras = documents.filter { it.type?.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) == true }
+    val currentExtraDocType = extraVehiclePhotoDocTypeForState(etat)
+    // Ne montrer que les photos supplementaires de la phase courante (pas celles des phases
+    // precedentes : avant reparation, en cours de reparation, apres reparation sont distinctes).
+    val uploadedExtras = documents.filter { isExtraVehiclePhotoDocType(it.type) && resolveAgentTerrainPhaseForDocType(it.type) == etat }
     val pendingExtras = pendingPhotos.mapIndexedNotNull { i, p ->
-        if (p.docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) Pair(i, p) else null
+        if (isExtraVehiclePhotoDocType(p.docType)) Pair(i, p) else null
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -587,7 +715,7 @@ private fun ExtraVehiclePhotosCard(
             ) {
                 SectionTitle("Photos supplémentaires")
                 OutlinedButton(
-                    onClick = { onTakePhoto("$EXTRA_VEHICLE_PHOTO_PREFIX ${System.currentTimeMillis()}") },
+                    onClick = { onTakePhoto("$currentExtraDocType ${System.currentTimeMillis()}") },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -607,7 +735,7 @@ private fun ExtraVehiclePhotosCard(
             pendingExtras.forEachIndexed { i, (index, pending) ->
                 if (i > 0 || uploadedExtras.isNotEmpty()) HorizontalDivider(thickness = 0.5.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onViewPendingPhoto(pending.file) }.padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -623,7 +751,10 @@ private fun ExtraVehiclePhotosCard(
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
-                        Text("En attente d'envoi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                        Text("En attente d'envoi · appuyez pour vérifier", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                    }
+                    IconButton(onClick = { onViewPendingPhoto(pending.file) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Consulter", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = { onRemovePending(index) }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
@@ -633,6 +764,7 @@ private fun ExtraVehiclePhotosCard(
 
             uploadedExtras.forEachIndexed { i, doc ->
                 if (i > 0) HorizontalDivider(thickness = 0.5.dp)
+                val isLocked = isDocTypeLockedForState(doc.type, etat)
                 var showConfirm by remember { mutableStateOf(false) }
                 if (showConfirm) {
                     AlertDialog(
@@ -648,7 +780,7 @@ private fun ExtraVehiclePhotosCard(
                     )
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onViewDocument(doc) }.padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -662,9 +794,19 @@ private fun ExtraVehiclePhotosCard(
                         doc.originalFileName?.let {
                             Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        if (isLocked) {
+                            Text("Phase terminée : consultable uniquement", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        }
                     }
-                    IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    IconButton(onClick = { onViewDocument(doc) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Consulter", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    }
+                    if (isLocked) {
+                        Icon(Icons.Default.Lock, contentDescription = "Verrouillée", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp).padding(end = 6.dp))
+                    } else {
+                        IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }
@@ -675,20 +817,28 @@ private fun ExtraVehiclePhotosCard(
 // --- Card autres documents ---
 @Composable
 private fun OtherDocumentsCard(
+    etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,
     docTypes: List<String>,
     onTakePhoto: (String) -> Unit,
     onDeleteDocument: (Long) -> Unit,
-    onRemovePending: (Int) -> Unit
+    onRemovePending: (Int) -> Unit,
+    onViewDocument: (DocumentSinistre) -> Unit,
+    onViewPendingPhoto: (File) -> Unit = {}
 ) {
+    val isRepairPhase = etat in REPAIR_PHASE_STATES
     val uploadedOtherDocs = documents.filter { doc ->
         VEHICLE_ANGLES.none { angle -> doc.type == angleDocType(angle) } &&
-        doc.type?.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX) != true
+        !isExtraVehiclePhotoDocType(doc.type) &&
+        // En cours/apres reparation : seules Carte grise et Attestation assurance restent
+        // affichees, les autres pieces des phases precedentes (permis, CIN, garantie,
+        // justificatifs, factures) sont masquees.
+        (!isRepairPhase || doc.type?.trim() in CONSULTABLE_ONLY_DOC_TYPES_DURING_REPAIR)
     }
     val pendingOtherPhotos = pendingPhotos.mapIndexedNotNull { index, p ->
         if (VEHICLE_ANGLES.none { angle -> p.docType == angleDocType(angle) } &&
-            !p.docType.startsWith(EXTRA_VEHICLE_PHOTO_PREFIX)) Pair(index, p) else null
+            !isExtraVehiclePhotoDocType(p.docType)) Pair(index, p) else null
     }
     var showJustificatifDialog by remember { mutableStateOf(false) }
 
@@ -715,9 +865,36 @@ private fun OtherDocumentsCard(
         )
     }
 
+    // Pieces (deja envoyees ou en attente) rattachees a un docType donne, affichees directement
+    // sous son bouton pour que chaque piece jointe soit clairement associee a son type.
+    @Composable
+    fun AttachmentsFor(types: List<String>) {
+        val matchingPending = pendingOtherPhotos.filter { (_, p) -> p.docType in types }
+        val matchingUploaded = uploadedOtherDocs.filter { it.type?.trim() in types }
+        if (matchingPending.isEmpty() && matchingUploaded.isEmpty()) return
+        Column(modifier = Modifier.padding(start = 20.dp, top = 2.dp, bottom = 4.dp)) {
+            matchingPending.forEach { (index, pending) ->
+                PendingPhotoRow(
+                    pending = pending,
+                    onRemove = { onRemovePending(index) },
+                    onView = { onViewPendingPhoto(pending.file) }
+                )
+            }
+            matchingUploaded.forEach { doc ->
+                DocumentRow(
+                    doc = doc,
+                    isLocked = isDocTypeLockedForState(doc.type, etat),
+                    onDelete = { doc.id?.let { onDeleteDocument(it) } },
+                    onView = { onViewDocument(doc) }
+                )
+            }
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionTitle("Autres documents")
+            Spacer(Modifier.height(4.dp))
 
             docTypes.forEach { docType ->
                 OutlinedButton(
@@ -728,32 +905,44 @@ private fun OtherDocumentsCard(
                     Spacer(Modifier.width(8.dp))
                     Text(docType, style = MaterialTheme.typography.bodySmall)
                 }
+                AttachmentsFor(listOf(docType))
             }
 
-            // Bouton Justificatif avec sélection de sous-type
-            OutlinedButton(
-                onClick = { showJustificatifDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Justificatif", style = MaterialTheme.typography.bodySmall)
-            }
-
-            // Photos en attente (autres docs)
-            if (pendingOtherPhotos.isNotEmpty()) {
-                HorizontalDivider()
-                Text("En attente d'envoi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                pendingOtherPhotos.forEach { (index, pending) ->
-                    PendingPhotoRow(pending = pending, onRemove = { onRemovePending(index) })
+            // Bouton Justificatif avec sélection de sous-type (pas de nouveau justificatif
+            // en cours/apres reparation : seules Carte grise et Assurance restent visibles).
+            if (!isRepairPhase) {
+                OutlinedButton(
+                    onClick = { showJustificatifDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Justificatif", style = MaterialTheme.typography.bodySmall)
                 }
+                AttachmentsFor(JUSTIFICATIF_SUBTYPES)
             }
 
-            // Documents déjà uploadés
-            if (uploadedOtherDocs.isNotEmpty()) {
+            // Pieces dont le type ne correspond a aucun bouton actuellement propose (ex: un
+            // type de facture non disponible dans cette phase) : on ne les cache pas.
+            val groupedTypes = (docTypes + JUSTIFICATIF_SUBTYPES).toSet()
+            val leftoverPending = pendingOtherPhotos.filter { (_, p) -> p.docType !in groupedTypes }
+            val leftoverUploaded = uploadedOtherDocs.filter { it.type?.trim() !in groupedTypes }
+            if (leftoverPending.isNotEmpty() || leftoverUploaded.isNotEmpty()) {
                 HorizontalDivider()
-                uploadedOtherDocs.forEach { doc ->
-                    DocumentRow(doc = doc, onDelete = { doc.id?.let { onDeleteDocument(it) } })
+                leftoverPending.forEach { (index, pending) ->
+                    PendingPhotoRow(
+                        pending = pending,
+                        onRemove = { onRemovePending(index) },
+                        onView = { onViewPendingPhoto(pending.file) }
+                    )
+                }
+                leftoverUploaded.forEach { doc ->
+                    DocumentRow(
+                        doc = doc,
+                        isLocked = isDocTypeLockedForState(doc.type, etat),
+                        onDelete = { doc.id?.let { onDeleteDocument(it) } },
+                        onView = { onViewDocument(doc) }
+                    )
                 }
             }
         }
@@ -761,9 +950,9 @@ private fun OtherDocumentsCard(
 }
 
 @Composable
-private fun PendingPhotoRow(pending: PendingPhoto, onRemove: () -> Unit) {
+private fun PendingPhotoRow(pending: PendingPhoto, onRemove: () -> Unit, onView: () -> Unit = {}) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onView).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -775,7 +964,10 @@ private fun PendingPhotoRow(pending: PendingPhoto, onRemove: () -> Unit) {
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(pending.docType, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-            Text("En attente d'envoi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Text("En attente d'envoi · appuyez pour vérifier", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+        }
+        IconButton(onClick = onView, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Default.Visibility, contentDescription = "Consulter", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
         }
         IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
@@ -830,7 +1022,7 @@ private fun VehiculeCard(dossier: Dossier) {
 }
 
 @Composable
-private fun DocumentRow(doc: DocumentSinistre, onDelete: () -> Unit) {
+private fun DocumentRow(doc: DocumentSinistre, isLocked: Boolean = false, onDelete: () -> Unit, onView: () -> Unit = {}) {
     var showConfirm by remember { mutableStateOf(false) }
     if (showConfirm) {
         AlertDialog(
@@ -846,7 +1038,7 @@ private fun DocumentRow(doc: DocumentSinistre, onDelete: () -> Unit) {
         )
     }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onView).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -857,9 +1049,19 @@ private fun DocumentRow(doc: DocumentSinistre, onDelete: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Text(doc.originalFileName ?: doc.fileName ?: "-", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
             doc.type?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (isLocked) {
+                Text("Phase terminée : consultable uniquement", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            }
         }
-        IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(32.dp)) {
-            Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+        IconButton(onClick = onView, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Default.Visibility, contentDescription = "Consulter", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        }
+        if (isLocked) {
+            Icon(Icons.Default.Lock, contentDescription = "Verrouillé", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp).padding(end = 6.dp))
+        } else {
+            IconButton(onClick = { showConfirm = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }

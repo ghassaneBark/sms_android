@@ -1,5 +1,6 @@
 package com.ma.sms.android.ui.detail
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ma.sms.android.data.model.AgentTerrainUser
@@ -38,8 +39,12 @@ data class DossierDetailUiState(
     val lastValidDevis: Devis? = null,
     val agentTerrainUsers: List<AgentTerrainUser> = emptyList(),
     val isLoadingAgentTerrainUsers: Boolean = false,
-    val isReassigning: Boolean = false
+    val isReassigning: Boolean = false,
+    val isDownloading: Boolean = false,
+    val fileToOpen: FileToOpen? = null
 )
+
+data class FileToOpen(val uri: Uri, val mimeType: String)
 
 class DossierDetailViewModel(
     private val dossierId: Long,
@@ -61,8 +66,8 @@ class DossierDetailViewModel(
                 .onSuccess { dossier ->
                     _uiState.value = _uiState.value.copy(dossier = dossier, isLoading = false)
                     loadDocuments()
-                    // En ATTENTE_EXPERTISE_SR : charger le dernier devis VALIDE pour l'afficher en mode light
-                    if (dossier.etat == "ATTENTE_EXPERTISE_SR") {
+                    // En cours/après réparation : charger le dernier devis VALIDE pour l'afficher en mode light
+                    if (dossier.etat == "ATTENTE_EXPERTISE_SR" || dossier.etat == "ATTENTE_PHOTO_FIN_REPARATION") {
                         loadLastValidDevis()
                     }
                 }
@@ -194,6 +199,60 @@ class DossierDetailViewModel(
                     _uiState.value = _uiState.value.copy(isReassigning = false, error = msg)
                 }
         }
+    }
+
+    // Telecharge une piece jointe et demande son ouverture (visionneuse image/PDF du systeme).
+    fun viewDocument(doc: DocumentSinistre) {
+        val documentId = doc.id ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDownloading = true, error = null)
+            val fileName = doc.originalFileName ?: doc.fileName ?: "document-$documentId"
+            repository.downloadDocument(dossierId, documentId, fileName)
+                .onSuccess { uri ->
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        fileToOpen = FileToOpen(uri, doc.contentType ?: "*/*")
+                    )
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        error = "Impossible d'ouvrir le document."
+                    )
+                }
+        }
+    }
+
+    // Telecharge le PDF "Accord sur devis" et demande son ouverture.
+    fun viewDevisPdf(devis: Devis) {
+        val devisId = devis.id ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDownloading = true, error = null)
+            repository.downloadDevisPdf(devisId)
+                .onSuccess { uri ->
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        fileToOpen = FileToOpen(uri, "application/pdf")
+                    )
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        error = "Impossible d'ouvrir l'accord sur devis."
+                    )
+                }
+        }
+    }
+
+    // Ouvre une photo pas encore envoyee (fichier local) pour verification avant upload.
+    fun viewPendingPhoto(file: File) {
+        _uiState.value = _uiState.value.copy(
+            fileToOpen = FileToOpen(repository.uriForLocalFile(file), "image/jpeg")
+        )
+    }
+
+    fun fileOpenHandled() {
+        _uiState.value = _uiState.value.copy(fileToOpen = null)
     }
 
     fun showError(message: String) {
