@@ -49,7 +49,9 @@ fun CameraCaptureScreen(
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
-    var torchOn by remember { mutableStateOf(false) }
+    // Flash au moment de la photo (ImageCapture.FLASH_MODE_ON), pas une torche allumee en
+    // continu : comportement d'un appareil photo classique.
+    var flashEnabled by remember { mutableStateOf(false) }
     var hasFlash by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -77,6 +79,7 @@ fun CameraCaptureScreen(
                     }
                     val capture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
                         .build()
                     imageCapture = capture
 
@@ -115,14 +118,14 @@ fun CameraCaptureScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (hasFlash) {
                     IconButton(onClick = {
-                        val cam = camera ?: return@IconButton
-                        val next = !torchOn
-                        cam.cameraControl.enableTorch(next)
-                        torchOn = next
+                        val capture = imageCapture ?: return@IconButton
+                        val next = !flashEnabled
+                        capture.flashMode = if (next) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+                        flashEnabled = next
                     }) {
                         Icon(
-                            if (torchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                            contentDescription = if (torchOn) "Désactiver le flash" else "Activer le flash",
+                            if (flashEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = if (flashEnabled) "Désactiver le flash" else "Activer le flash",
                             tint = Color.White
                         )
                     }
