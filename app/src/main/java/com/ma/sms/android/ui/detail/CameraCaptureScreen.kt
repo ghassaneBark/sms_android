@@ -2,6 +2,7 @@ package com.ma.sms.android.ui.detail
 
 import android.util.Log
 import android.widget.Toast
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -9,15 +10,19 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -42,11 +47,26 @@ fun CameraCaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
+    var torchOn by remember { mutableStateOf(false) }
+    var hasFlash by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(camera) {
+                    // Pincer pour zoomer : ratio relatif applique au zoom courant, borne aux
+                    // limites materielles du capteur (zoomState.min/maxZoomRatio).
+                    detectTransformGestures { _, _, zoomChange, _ ->
+                        val cam = camera ?: return@detectTransformGestures
+                        val zoomState = cam.cameraInfo.zoomState.value ?: return@detectTransformGestures
+                        val newRatio = (zoomState.zoomRatio * zoomChange)
+                            .coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+                        cam.cameraControl.setZoomRatio(newRatio)
+                    }
+                },
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
@@ -62,12 +82,14 @@ fun CameraCaptureScreen(
 
                     try {
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
+                        val boundCamera = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             capture
                         )
+                        camera = boundCamera
+                        hasFlash = boundCamera.cameraInfo.hasFlashUnit()
                     } catch (e: Exception) {
                         Log.e("CameraCaptureScreen", "Echec liaison camera", e)
                     }
@@ -90,8 +112,24 @@ fun CameraCaptureScreen(
                 Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
                 subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall) }
             }
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Fermer", tint = Color.White)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasFlash) {
+                    IconButton(onClick = {
+                        val cam = camera ?: return@IconButton
+                        val next = !torchOn
+                        cam.cameraControl.enableTorch(next)
+                        torchOn = next
+                    }) {
+                        Icon(
+                            if (torchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = if (torchOn) "Désactiver le flash" else "Activer le flash",
+                            tint = Color.White
+                        )
+                    }
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Fermer", tint = Color.White)
+                }
             }
         }
 
