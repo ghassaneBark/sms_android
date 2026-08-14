@@ -131,7 +131,7 @@ fun CameraCaptureScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
                 subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall) }
             }

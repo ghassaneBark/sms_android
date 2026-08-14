@@ -360,7 +360,7 @@ fun DossierDetailScreen(
         CameraCaptureScreen(
             title = cameraDisplayLabel(cameraQueue[cameraQueueIndex], state.dossier?.etat),
             subtitle = if (isExtraVehiclePhotoDocType(cameraQueue[cameraQueueIndex]))
-                "Photo ${cameraQueueIndex + 1} — appuyez sur X quand vous avez terminé"
+                "Photo ${cameraQueueIndex + 1} — X pour terminer"
             else if (cameraQueue.size > 1) "${cameraQueueIndex + 1} / ${cameraQueue.size}" else null,
             onCapture = { file ->
                 val docType = cameraQueue[cameraQueueIndex]
