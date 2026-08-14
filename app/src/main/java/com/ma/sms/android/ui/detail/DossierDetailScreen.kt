@@ -242,7 +242,6 @@ fun DossierDetailScreen(
     }
 
     var showFinMissionDialog by remember { mutableStateOf(false) }
-    var showContinueExtraPhotoDialog by remember { mutableStateOf(false) }
     var showReassignDialog by remember { mutableStateOf(false) }
 
     // File d'attente de captures pour l'ecran camera integre (CameraX) :
@@ -259,9 +258,11 @@ fun DossierDetailScreen(
         showCameraScreen = true
     }
 
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) openCameraQueue(pendingCameraQueue)
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        if (results[Manifest.permission.CAMERA] == true) openCameraQueue(pendingCameraQueue)
         else vm.showError("Permission caméra refusée.")
+        // La position est facultative (incrustee sur la photo si disponible) : son refus
+        // ne bloque jamais l'ouverture de la camera.
     }
 
     fun launchCamera(docType: String) {
@@ -283,10 +284,12 @@ fun DossierDetailScreen(
         }
 
         pendingCameraQueue = queue
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+        val hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val hasLocationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (hasCameraPermission && hasLocationPermission) {
             openCameraQueue(queue)
         } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            cameraPermissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION))
         }
     }
 
@@ -353,37 +356,25 @@ fun DossierDetailScreen(
         )
     }
 
-    if (showContinueExtraPhotoDialog) {
-        AlertDialog(
-            onDismissRequest = { showContinueExtraPhotoDialog = false },
-            title = { Text("Photo ajoutée") },
-            text = { Text("Prendre une autre photo supplémentaire ?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showContinueExtraPhotoDialog = false
-                    cameraQueue = cameraQueue + "${extraVehiclePhotoDocTypeForState(state.dossier?.etat)} ${System.currentTimeMillis()}"
-                    cameraQueueIndex = cameraQueue.lastIndex
-                    showCameraScreen = true
-                }) {
-                    Text("Oui", color = MaterialTheme.colorScheme.primary)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showContinueExtraPhotoDialog = false; showCameraScreen = false }) { Text("Non") }
-            }
-        )
-    }
-
     if (showCameraScreen && cameraQueue.isNotEmpty()) {
         CameraCaptureScreen(
             title = cameraDisplayLabel(cameraQueue[cameraQueueIndex], state.dossier?.etat),
-            subtitle = if (cameraQueue.size > 1) "${cameraQueueIndex + 1} / ${cameraQueue.size}" else null,
+            subtitle = if (isExtraVehiclePhotoDocType(cameraQueue[cameraQueueIndex]))
+                "Photo ${cameraQueueIndex + 1} — appuyez sur X quand vous avez terminé"
+            else if (cameraQueue.size > 1) "${cameraQueueIndex + 1} / ${cameraQueue.size}" else null,
             onCapture = { file ->
                 val docType = cameraQueue[cameraQueueIndex]
                 vm.addPendingPhoto(file, docType)
                 when {
                     cameraQueueIndex < cameraQueue.lastIndex -> cameraQueueIndex++
-                    isExtraVehiclePhotoDocType(docType) -> showContinueExtraPhotoDialog = true
+                    isExtraVehiclePhotoDocType(docType) -> {
+                        // Photos supplementaires en nombre libre : on enchaine directement sur
+                        // une nouvelle prise sans demander de confirmation a chaque photo (les
+                        // agents terrain en ajoutent parfois beaucoup) ; l'agent ferme l'ecran
+                        // (bouton X) quand il a termine.
+                        cameraQueue = cameraQueue + "${extraVehiclePhotoDocTypeForState(state.dossier?.etat)} ${System.currentTimeMillis()}"
+                        cameraQueueIndex = cameraQueue.lastIndex
+                    }
                     else -> showCameraScreen = false
                 }
             },

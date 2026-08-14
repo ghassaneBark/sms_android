@@ -28,6 +28,14 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.ma.sms.android.SmsApplication
+import com.ma.sms.android.util.JwtUtils
+import com.ma.sms.android.util.LocationHelper
+import com.ma.sms.android.util.PhotoLocation
+import com.ma.sms.android.util.PhotoWatermark
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -46,6 +54,7 @@ fun CameraCaptureScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
@@ -53,6 +62,17 @@ fun CameraCaptureScreen(
     // continu : comportement d'un appareil photo classique.
     var flashEnabled by remember { mutableStateOf(false) }
     var hasFlash by remember { mutableStateOf(false) }
+
+    // Nom de l'agent terrain (claims du token Keycloak) et position courante, recuperes des
+    // l'ouverture de l'ecran pour etre prets au moment ou l'utilisateur declenche la capture.
+    val agentName = remember {
+        val app = context.applicationContext as SmsApplication
+        JwtUtils.extractDisplayName(app.tokenManager.accessToken) ?: "Agent terrain"
+    }
+    var currentLocation by remember { mutableStateOf<PhotoLocation?>(null) }
+    LaunchedEffect(Unit) {
+        currentLocation = LocationHelper.getCurrentLocation(context)
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -155,8 +175,14 @@ fun CameraCaptureScreen(
                         ContextCompat.getMainExecutor(context),
                         object : ImageCapture.OnImageSavedCallback {
                             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                                isCapturing = false
-                                onCapture(file)
+                                val lines = buildWatermarkLines(agentName, currentLocation)
+                                coroutineScope.launch {
+                                    withContext(Dispatchers.Default) {
+                                        PhotoWatermark.apply(file, lines)
+                                    }
+                                    isCapturing = false
+                                    onCapture(file)
+                                }
                             }
 
                             override fun onError(exception: ImageCaptureException) {
@@ -178,4 +204,22 @@ fun CameraCaptureScreen(
             }
         }
     }
+}
+
+// Lignes incrustees en haut a gauche de chaque photo : date/heure, agent terrain, position GPS
+// et adresse (voir PhotoWatermark). La position reste "best effort" : si le GPS n'a pas repondu
+// a temps ou que la permission est refusee, on l'indique plutot que de bloquer la capture.
+private fun buildWatermarkLines(agentName: String, location: PhotoLocation?): List<String> {
+    val dateTime = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+    val lines = mutableListOf(
+        dateTime,
+        "Par: $agentName | SAGEXPERT"
+    )
+    if (location != null) {
+        lines.add("Position: ${String.format(Locale.US, "%.6f", location.latitude)}, ${String.format(Locale.US, "%.6f", location.longitude)}")
+        location.address?.let { lines.add("Adresse: $it") }
+    } else {
+        lines.add("Position: indisponible")
+    }
+    return lines
 }
