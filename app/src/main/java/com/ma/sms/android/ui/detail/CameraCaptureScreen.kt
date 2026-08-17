@@ -121,10 +121,10 @@ fun CameraCaptureScreen(
             }
         )
 
-        // Mini-carte "vue de dessus" (coin bas-droit) indiquant le cote a photographier : ne
+        // Mini-carte "vue de dessus" (coin bas-droit) indiquant le cote/zone a photographier : ne
         // recouvre pas l'apercu camera, contrairement a une silhouette en plein ecran. N'affiche
-        // rien pour les prises non exterieures (tableau de bord, N°CHAS, interieur) ni pour les
-        // photos supplementaires.
+        // rien pour "Tableau de bord" (aucune zone dediee pertinente) ni pour les photos
+        // supplementaires.
         VehicleAngleGuideOverlay(
             angleLabel = title,
             modifier = Modifier
