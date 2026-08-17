@@ -35,15 +35,18 @@ import java.util.*
 // --- Angles véhicule ---
 data class VehicleAngle(val label: String, val required: Boolean)
 
+// Ordre circulaire (tour du vehicule dans un seul sens) pour que l'agent terrain n'ait pas a
+// faire d'allers-retours : face avant -> coin avant droit -> flanc droit -> coin arriere droit ->
+// face arriere -> coin arriere gauche -> flanc gauche -> coin avant gauche, puis interieur.
 val VEHICLE_ANGLES = listOf(
     VehicleAngle("Face avant",      required = true),
     VehicleAngle("Avant droit",     required = true),
-    VehicleAngle("Avant gauche",    required = true),
     VehicleAngle("Latérale droite", required = true),
-    VehicleAngle("Latérale gauche", required = true),
-    VehicleAngle("Face arrière",    required = true),
     VehicleAngle("Arrière droit",   required = true),
+    VehicleAngle("Face arrière",    required = true),
     VehicleAngle("Arrière gauche",  required = true),
+    VehicleAngle("Latérale gauche", required = true),
+    VehicleAngle("Avant gauche",    required = true),
     VehicleAngle("Tableau de bord", required = true),
     VehicleAngle("N°CHAS",         required = true),
     VehicleAngle("Intérieur",       required = true)
