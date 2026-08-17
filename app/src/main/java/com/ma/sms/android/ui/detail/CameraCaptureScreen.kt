@@ -121,12 +121,15 @@ fun CameraCaptureScreen(
             }
         )
 
-        // Gabarit (silhouette du vehicule) pour aider a cadrer l'angle demande : plus pratique
-        // qu'un simple libelle. N'affiche rien pour les prises non exterieures (tableau de bord,
-        // N°CHAS, interieur) ni pour les photos supplementaires.
+        // Mini-carte "vue de dessus" (coin bas-droit) indiquant le cote a photographier : ne
+        // recouvre pas l'apercu camera, contrairement a une silhouette en plein ecran. N'affiche
+        // rien pour les prises non exterieures (tableau de bord, N°CHAS, interieur) ni pour les
+        // photos supplementaires.
         VehicleAngleGuideOverlay(
             angleLabel = title,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 120.dp)
         )
 
         // Bandeau haut : titre + fermeture
