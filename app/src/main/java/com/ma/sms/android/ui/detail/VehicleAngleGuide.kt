@@ -42,8 +42,9 @@ private fun resolveGuideZone(label: String): GuideZone? = when (label) {
     "Avant gauche" -> GuideZone(0f, 3f, 50f, 95f)
     "Arrière droit" -> GuideZone(70f, 145f, 120f, 237f)
     "Arrière gauche" -> GuideZone(0f, 145f, 50f, 237f)
-    // Zones centrees sur les memes positions que les hotspots de CarDiagramCard (0.72,0.35) et
-    // (0.50,0.62) rapportees au repere du drawable (120x240), pour rester coherent.
+    // Zones centrees sur les memes positions que les hotspots de CarDiagramCard (0.28,0.35),
+    // (0.72,0.35) et (0.50,0.62) rapportees au repere du drawable (120x240), pour rester coherent.
+    "Tableau de bord" -> GuideZone(16f, 66f, 52f, 102f)
     "N°CHAS" -> GuideZone(68f, 66f, 104f, 102f)
     "Intérieur" -> GuideZone(42f, 122f, 78f, 176f)
     else -> null
