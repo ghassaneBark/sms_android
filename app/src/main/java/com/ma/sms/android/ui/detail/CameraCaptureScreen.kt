@@ -1,6 +1,8 @@
 package com.ma.sms.android.ui.detail
 
+import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -140,7 +142,7 @@ fun CameraCaptureScreen(
                 }
                 Log.i(TAG, "Detection ultra grand-angle : ${if (found != null) "trouve (physicalCameraId=${found.physicalCameraId}, facteur=${found.zoomFactor})" else "aucun"}")
                 if (found == null) {
-                    diagnostics = collectCameraDiagnostics(provider, mainCameraInfo)
+                    diagnostics = collectCameraDiagnostics(context, provider, mainCameraInfo)
                     Log.i(TAG, "Diagnostic : $diagnostics")
                 }
             }
@@ -392,8 +394,10 @@ private fun findUltraWideCamera(provider: ProcessCameraProvider, mainCameraInfo:
 // Diagnostic temporaire (voir le champ "diagnostics" dans CameraCaptureScreen) : resume ce que
 // les deux strategies de detection ont vu, pour comprendre sans logcat pourquoi aucun ultra
 // grand-angle n'a ete retenu sur un appareil donne (aucun second capteur back, FOV insuffisant,
-// caracteristiques illisibles...).
-private fun collectCameraDiagnostics(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): String {
+// caracteristiques illisibles...). Interroge aussi CameraManager directement (sans passer par
+// CameraX), pour verifier si Android lui-meme ne remonte qu'un seul id back sur cet appareil, ou
+// si CameraX en cache certains.
+private fun collectCameraDiagnostics(context: Context, provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): String {
     val sb = StringBuilder()
     try {
         val backCameras = CameraSelector.Builder()
@@ -423,6 +427,26 @@ private fun collectCameraDiagnostics(provider: ProcessCameraProvider, mainCamera
         sb.append("]")
     } catch (e: Exception) {
         sb.append(" logical=err(${e.javaClass.simpleName})")
+    }
+
+    sb.append(" | raw:")
+    try {
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val ids = manager.cameraIdList
+        sb.append(" ids=${ids.joinToString(",")}")
+        for (id in ids) {
+            val characteristics = manager.getCameraCharacteristics(id)
+            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            val fov = fovFromCharacteristics(characteristics)
+            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val isLogical = capabilities?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) == true
+            val physIds = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                try { characteristics.physicalCameraIds.joinToString("+") } catch (e: Exception) { "?" }
+            } else "n/a"
+            sb.append(" [$id facing=$facing fov=${fov?.let { "%.0f°".format(it) } ?: "?"} logical=$isLogical phys=$physIds]")
+        }
+    } catch (e: Exception) {
+        sb.append(" err(${e.javaClass.simpleName}:${e.message})")
     }
 
     return sb.toString()
