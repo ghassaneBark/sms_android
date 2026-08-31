@@ -4,6 +4,8 @@ import android.hardware.camera2.CameraCharacteristics
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
@@ -50,10 +52,13 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.Date
 
+private const val TAG = "CameraCaptureScreen"
+
 /**
  * Ecran de capture photo avec apercu camera integre (CameraX), pour eviter
  * l'aller-retour vers l'application Camera externe entre chaque photo.
  */
+@OptIn(ExperimentalCamera2Interop::class)
 @Composable
 fun CameraCaptureScreen(
     title: String,
@@ -74,10 +79,13 @@ fun CameraCaptureScreen(
     var flashEnabled by remember { mutableStateOf(false) }
     var hasFlash by remember { mutableStateOf(false) }
 
-    // Objectif ultra grand-angle : cameras physique separee sur la plupart des telephones, non
-    // accessible en dessous de 1x sur l'objectif principal (voir findUltraWideCameraInfo). Reste
-    // a null (bouton masque) sur les appareils qui n'en ont pas, comportement inchangé pour eux.
-    var ultraWideCameraInfo by remember { mutableStateOf<CameraInfo?>(null) }
+    // Objectif ultra grand-angle, non accessible en dessous de 1x sur l'objectif principal (voir
+    // findUltraWideCamera). Deux cas de figure existent selon le materiel : soit une CameraInfo
+    // arriere totalement distincte, soit (le plus courant sur les telephones recents) un
+    // sous-capteur physique cache a l'interieur d'une seule camera "logique" multi-objectifs,
+    // uniquement accessible via Camera2Interop.setPhysicalCameraId. Reste a null (bouton masque)
+    // sur les appareils qui n'ont vraiment aucun ultra grand-angle exploitable.
+    var ultraWideCamera by remember { mutableStateOf<UltraWideCamera?>(null) }
     var usingUltraWide by remember { mutableStateOf(false) }
     // Facteur approximatif (focale principale / focale grand-angle, ex. 0.6) utilise a la fois
     // pour le libelle du bouton bascule et pour afficher un zoom "effectif" continu avec
@@ -110,7 +118,7 @@ fun CameraCaptureScreen(
     }
 
     // Recupere le fournisseur de cameras une seule fois, puis detecte un eventuel objectif ultra
-    // grand-angle distinct de l'objectif principal (voir findUltraWideCameraInfo).
+    // grand-angle (voir findUltraWideCamera).
     LaunchedEffect(Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -120,11 +128,12 @@ fun CameraCaptureScreen(
                 .filter(provider.availableCameraInfos)
                 .firstOrNull()
             if (mainCameraInfo != null) {
-                val ultraWide = findUltraWideCameraInfo(provider, mainCameraInfo)
-                ultraWideCameraInfo = ultraWide
-                if (ultraWide != null) {
-                    ultraWideZoomFactor = computeZoomFactor(mainCameraInfo, ultraWide)
+                val found = findUltraWideCamera(provider, mainCameraInfo)
+                ultraWideCamera = found
+                if (found != null) {
+                    ultraWideZoomFactor = found.zoomFactor
                 }
+                Log.i(TAG, "Detection ultra grand-angle : ${if (found != null) "trouve (physicalCameraId=${found.physicalCameraId}, facteur=${found.zoomFactor})" else "aucun"}")
             }
         }, ContextCompat.getMainExecutor(context))
     }
@@ -133,31 +142,42 @@ fun CameraCaptureScreen(
     // du fournisseur de cameras, puis a chaque bascule 1x <-> ultra grand-angle.
     LaunchedEffect(cameraProvider, usingUltraWide) {
         val provider = cameraProvider ?: return@LaunchedEffect
-        val preview = Preview.Builder().build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
-        val capture = ImageCapture.Builder()
+        val previewBuilder = Preview.Builder()
+        val captureBuilder = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
-            .build()
-        imageCapture = capture
 
-        val targetUltraWide = ultraWideCameraInfo
-        val selector = if (usingUltraWide && targetUltraWide != null) {
-            CameraSelector.Builder()
-                .addCameraFilter { infos -> infos.filter { it == targetUltraWide } }
-                .build()
+        val target = ultraWideCamera
+        val selector = if (usingUltraWide && target != null) {
+            val physicalId = target.physicalCameraId
+            if (physicalId != null) {
+                // Meme camera "logique" que l'objectif principal, mais on force les flux preview
+                // et capture a venir du sous-capteur ultra grand-angle (voir UltraWideCamera).
+                Camera2Interop.Extender(previewBuilder).setPhysicalCameraId(physicalId)
+                Camera2Interop.Extender(captureBuilder).setPhysicalCameraId(physicalId)
+                CameraSelector.DEFAULT_BACK_CAMERA
+            } else {
+                val info = target.cameraInfo
+                CameraSelector.Builder()
+                    .addCameraFilter { infos -> infos.filter { Camera2CameraInfo.from(it).cameraId == Camera2CameraInfo.from(info).cameraId } }
+                    .build()
+            }
         } else {
             CameraSelector.DEFAULT_BACK_CAMERA
         }
+
+        val preview = previewBuilder.build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val capture = captureBuilder.build()
+        imageCapture = capture
 
         try {
             provider.unbindAll()
             val boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
             camera = boundCamera
             hasFlash = boundCamera.cameraInfo.hasFlashUnit()
+            Log.i(TAG, "Camera liee : usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId}")
         } catch (e: Exception) {
-            Log.e("CameraCaptureScreen", "Echec liaison camera", e)
+            Log.e(TAG, "Echec liaison camera (usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId})", e)
         }
     }
 
@@ -231,8 +251,8 @@ fun CameraCaptureScreen(
         }
 
         // Bascule 1x <-> ultra grand-angle : visible seulement si l'appareil expose un objectif
-        // distinct nettement plus large que l'objectif principal (voir findUltraWideCameraInfo).
-        if (ultraWideCameraInfo != null) {
+        // nettement plus large que l'objectif principal (voir findUltraWideCamera).
+        if (ultraWideCamera != null) {
             Surface(
                 shape = RoundedCornerShape(50),
                 color = Color.Black.copy(alpha = 0.5f),
@@ -322,12 +342,33 @@ fun CameraCaptureScreen(
     }
 }
 
-// Cherche, parmi les cameras arriere, un objectif distinct du principal dont le champ de vision
-// horizontal est nettement plus large (seuil de securite pour ecarter un capteur macro/profondeur
-// qui ne serait pas plus large). Retourne null si l'appareil n'a pas d'ultra grand-angle exploitable.
+// Ultra grand-angle detecte : soit une CameraInfo arriere distincte (materiel a objectifs
+// separes), soit un sous-capteur physique cache dans la camera "logique" principale (materiel a
+// camera logique multi-objectifs, le cas le plus courant sur les telephones recents). Dans ce
+// second cas, cameraInfo reste celui de l'objectif principal : c'est physicalCameraId qui indique
+// a Camera2Interop.setPhysicalCameraId() quel sous-capteur streamer.
+private data class UltraWideCamera(
+    val cameraInfo: CameraInfo,
+    val physicalCameraId: String?,
+    val zoomFactor: Float
+)
+
+// Seuil de securite (degres) pour qu'un objectif soit considere comme "nettement plus large" que
+// le principal, et ecarter les fausses detections (capteur macro/profondeur, pas plus large).
 private const val ULTRA_WIDE_FOV_THRESHOLD_DEGREES = 15.0
 
-private fun findUltraWideCameraInfo(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): CameraInfo? {
+private fun findUltraWideCamera(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): UltraWideCamera? {
+    findSeparateUltraWideCameraInfo(provider, mainCameraInfo)?.let { separate ->
+        val factor = computeZoomFactor(focalLength(mainCameraInfo), focalLength(separate))
+        return UltraWideCamera(separate, null, factor)
+    }
+    return findUltraWidePhysicalCamera(mainCameraInfo)
+}
+
+// Cas 1 (materiel plus ancien/simple) : un objectif ultra grand-angle expose comme CameraInfo
+// arriere totalement independante de l'objectif principal.
+private fun findSeparateUltraWideCameraInfo(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): CameraInfo? {
+    val mainId = Camera2CameraInfo.from(mainCameraInfo).cameraId
     val backCameras = try {
         CameraSelector.Builder()
             .requireLensFacing(CameraSelector.LENS_FACING_BACK)
@@ -341,7 +382,7 @@ private fun findUltraWideCameraInfo(provider: ProcessCameraProvider, mainCameraI
     var widest: CameraInfo? = null
     var widestFov = mainFov
     for (info in backCameras) {
-        if (info == mainCameraInfo) continue
+        if (Camera2CameraInfo.from(info).cameraId == mainId) continue
         val fov = horizontalFovDegrees(info) ?: continue
         if (fov > widestFov + ULTRA_WIDE_FOV_THRESHOLD_DEGREES) {
             widestFov = fov
@@ -351,37 +392,85 @@ private fun findUltraWideCameraInfo(provider: ProcessCameraProvider, mainCameraI
     return widest
 }
 
-// Champ de vision horizontal approximatif (degres), calcule depuis la focale et la largeur
-// physique du capteur : 2 * atan(largeurCapteur / (2 * focale)).
-private fun horizontalFovDegrees(cameraInfo: CameraInfo): Double? {
+// Cas 2 (le plus courant) : l'objectif principal est en realite une camera "logique" qui fusionne
+// plusieurs sous-capteurs physiques (grand-angle + ultra grand-angle + parfois teleobjectif),
+// invisibles individuellement dans ProcessCameraProvider.availableCameraInfos. On les retrouve via
+// Camera2CameraInfo.getCameraCharacteristicsMap() (id physique -> CameraCharacteristics propres a
+// ce capteur), et on y applique le meme calcul de champ de vision que pour le cas 1.
+private data class PhysicalCandidate(val id: String, val fov: Double, val zoomFactor: Float)
+
+private fun findUltraWidePhysicalCamera(mainCameraInfo: CameraInfo): UltraWideCamera? {
     return try {
-        val characteristics = Camera2CameraInfo.from(cameraInfo)
-        val focalLength = characteristics.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-            ?.firstOrNull()
-        val sensorWidth = characteristics.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-            ?.width
-        if (focalLength == null || focalLength <= 0f || sensorWidth == null || sensorWidth <= 0f) {
+        val camera2Info = Camera2CameraInfo.from(mainCameraInfo)
+        val characteristicsMap = camera2Info.cameraCharacteristicsMap
+        if (characteristicsMap.size <= 1) {
+            // Pas de camera logique multi-objectifs detectee pour ce capteur.
             return null
         }
-        2.0 * Math.toDegrees(Math.atan((sensorWidth / (2.0 * focalLength)).toDouble()))
+        val mainId = camera2Info.cameraId
+        val mainFov = characteristicsMap[mainId]?.let { fovFromCharacteristics(it) }
+            ?: horizontalFovDegrees(mainCameraInfo)
+            ?: return null
+        val mainFocal = characteristicsMap[mainId]?.let { focalLengthFromCharacteristics(it) }
+            ?: focalLength(mainCameraInfo)
+
+        var best: PhysicalCandidate? = null
+        for ((id, characteristics) in characteristicsMap) {
+            if (id == mainId) continue
+            val fov = fovFromCharacteristics(characteristics) ?: continue
+            if (fov > mainFov + ULTRA_WIDE_FOV_THRESHOLD_DEGREES && (best == null || fov > best!!.fov)) {
+                val wideFocal = focalLengthFromCharacteristics(characteristics)
+                val factor = computeZoomFactor(mainFocal, wideFocal)
+                best = PhysicalCandidate(id, fov, factor)
+            }
+        }
+        best?.let { UltraWideCamera(mainCameraInfo, it.id, it.zoomFactor) }
+    } catch (e: Exception) {
+        Log.w(TAG, "Echec detection ultra grand-angle (camera logique)", e)
+        null
+    }
+}
+
+// Champ de vision horizontal approximatif (degres) d'une CameraInfo CameraX, calcule depuis la
+// focale et la largeur physique du capteur : 2 * atan(largeurCapteur / (2 * focale)).
+private fun horizontalFovDegrees(cameraInfo: CameraInfo): Double? {
+    return try {
+        fovFromCharacteristics(Camera2CameraInfo.extractCameraCharacteristics(cameraInfo))
     } catch (e: Exception) {
         null
     }
 }
 
-// Facteur de zoom approximatif (ex. 0.6) de l'ultra grand-angle par rapport a l'objectif
-// principal, base sur le ratio des focales des deux objectifs (approximation courante, memes
-// limites qu'un appareil photo grand public). Sert au libelle du bouton bascule et a l'affichage
-// du zoom "effectif" pendant le pincement.
-private fun computeZoomFactor(mainCameraInfo: CameraInfo, ultraWideCameraInfo: CameraInfo): Float {
-    val mainFocal = Camera2CameraInfo.from(mainCameraInfo)
-        .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
-    val wideFocal = Camera2CameraInfo.from(ultraWideCameraInfo)
-        .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
-    if (mainFocal == null || wideFocal == null || mainFocal <= 0f) {
-        return 0.6f
+private fun focalLength(cameraInfo: CameraInfo): Float? {
+    return try {
+        Camera2CameraInfo.from(cameraInfo)
+            .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            ?.firstOrNull()
+    } catch (e: Exception) {
+        null
     }
-    return wideFocal / mainFocal
+}
+
+private fun fovFromCharacteristics(characteristics: CameraCharacteristics): Double? {
+    val focalLength = focalLengthFromCharacteristics(characteristics) ?: return null
+    val sensorWidth = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.width
+    if (focalLength <= 0f || sensorWidth == null || sensorWidth <= 0f) return null
+    return 2.0 * Math.toDegrees(Math.atan((sensorWidth / (2.0 * focalLength)).toDouble()))
+}
+
+private fun focalLengthFromCharacteristics(characteristics: CameraCharacteristics): Float? {
+    return characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+}
+
+// Facteur de zoom approximatif (ex. 0.6) de l'ultra grand-angle par rapport a l'objectif
+// principal, base sur le ratio des focales (approximation courante, memes limites qu'un appareil
+// photo grand public). Sert au libelle du bouton bascule et a l'affichage du zoom "effectif"
+// pendant le pincement. Valeur par defaut si les focales sont indisponibles.
+private fun computeZoomFactor(mainFocal: Float?, wideFocal: Float?): Float {
+    if (mainFocal != null && wideFocal != null && mainFocal > 0f) {
+        return wideFocal / mainFocal
+    }
+    return 0.6f
 }
 
 // Lignes incrustees en haut a gauche de chaque photo : date/heure, agent terrain, position GPS
