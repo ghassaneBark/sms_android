@@ -12,6 +12,9 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -39,6 +42,7 @@ import com.ma.sms.android.util.LocationHelper
 import com.ma.sms.android.util.PhotoLocation
 import com.ma.sms.android.util.PhotoWatermark
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -75,7 +79,14 @@ fun CameraCaptureScreen(
     // a null (bouton masque) sur les appareils qui n'en ont pas, comportement inchangé pour eux.
     var ultraWideCameraInfo by remember { mutableStateOf<CameraInfo?>(null) }
     var usingUltraWide by remember { mutableStateOf(false) }
-    var ultraWideZoomLabel by remember { mutableStateOf("0.6x") }
+    // Facteur approximatif (focale principale / focale grand-angle, ex. 0.6) utilise a la fois
+    // pour le libelle du bouton bascule et pour afficher un zoom "effectif" continu avec
+    // l'objectif principal quand on pince sur l'ultra grand-angle (voir pinchZoomRatio).
+    var ultraWideZoomFactor by remember { mutableStateOf(0.6f) }
+
+    // Valeur de zoom affichee pendant le pincement, comme sur un appareil photo de telephone :
+    // remise a null (masquee) apres un court delai d'inactivite, voir le LaunchedEffect associe.
+    var pinchZoomRatio by remember { mutableStateOf<Float?>(null) }
 
     // Nom de l'agent terrain (claims du token Keycloak) et position courante, recuperes des
     // l'ouverture de l'ecran pour etre prets au moment ou l'utilisateur declenche la capture.
@@ -86,6 +97,16 @@ fun CameraCaptureScreen(
     var currentLocation by remember { mutableStateOf<PhotoLocation?>(null) }
     LaunchedEffect(Unit) {
         currentLocation = LocationHelper.getCurrentLocation(context)
+    }
+
+    // Masque l'indicateur de zoom apres un court delai d'inactivite : redemarre a chaque
+    // changement de pinchZoomRatio (donc a chaque mouvement de pincement), comme sur un appareil
+    // photo de telephone.
+    LaunchedEffect(pinchZoomRatio) {
+        if (pinchZoomRatio != null) {
+            delay(1200)
+            pinchZoomRatio = null
+        }
     }
 
     // Recupere le fournisseur de cameras une seule fois, puis detecte un eventuel objectif ultra
@@ -102,7 +123,7 @@ fun CameraCaptureScreen(
                 val ultraWide = findUltraWideCameraInfo(provider, mainCameraInfo)
                 ultraWideCameraInfo = ultraWide
                 if (ultraWide != null) {
-                    ultraWideZoomLabel = computeZoomLabel(mainCameraInfo, ultraWide)
+                    ultraWideZoomFactor = computeZoomFactor(mainCameraInfo, ultraWide)
                 }
             }
         }, ContextCompat.getMainExecutor(context))
@@ -154,6 +175,11 @@ fun CameraCaptureScreen(
                         val newRatio = (zoomState.zoomRatio * zoomChange)
                             .coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
                         cam.cameraControl.setZoomRatio(newRatio)
+                        // Valeur affichee "effective", continue avec l'objectif principal : sur
+                        // l'ultra grand-angle, son propre zoomRatio 1x correspond a ultraWideZoomFactor
+                        // (ex. 0.6x) sur cette echelle, comme sur un appareil photo de telephone.
+                        val effectiveRatio = if (usingUltraWide) newRatio * ultraWideZoomFactor else newRatio
+                        pinchZoomRatio = effectiveRatio
                     }
                 },
             factory = { previewView }
@@ -216,9 +242,31 @@ fun CameraCaptureScreen(
                     .clickable { usingUltraWide = !usingUltraWide }
             ) {
                 Text(
-                    text = if (usingUltraWide) "1x" else ultraWideZoomLabel,
+                    text = if (usingUltraWide) "1x" else String.format(Locale.US, "%.1fx", ultraWideZoomFactor),
                     color = Color.White,
                     style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
+
+        // Valeur de zoom affichee pendant le pincement (comme sur un appareil photo de telephone) :
+        // apparait a chaque mouvement, disparait en fondu apres une courte inactivite (voir le
+        // LaunchedEffect(pinchZoomRatio) qui remet pinchZoomRatio a null).
+        AnimatedVisibility(
+            visible = pinchZoomRatio != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.5f)
+            ) {
+                Text(
+                    text = String.format(Locale.US, "%.1fx", pinchZoomRatio ?: 1f),
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
@@ -321,17 +369,19 @@ private fun horizontalFovDegrees(cameraInfo: CameraInfo): Double? {
     }
 }
 
-// Facteur de zoom approximatif affiche sur le bouton bascule ("0.6x"...), base sur le ratio des
-// focales des deux objectifs (approximation courante, memes limites qu'un appareil photo grand public).
-private fun computeZoomLabel(mainCameraInfo: CameraInfo, ultraWideCameraInfo: CameraInfo): String {
+// Facteur de zoom approximatif (ex. 0.6) de l'ultra grand-angle par rapport a l'objectif
+// principal, base sur le ratio des focales des deux objectifs (approximation courante, memes
+// limites qu'un appareil photo grand public). Sert au libelle du bouton bascule et a l'affichage
+// du zoom "effectif" pendant le pincement.
+private fun computeZoomFactor(mainCameraInfo: CameraInfo, ultraWideCameraInfo: CameraInfo): Float {
     val mainFocal = Camera2CameraInfo.from(mainCameraInfo)
         .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
     val wideFocal = Camera2CameraInfo.from(ultraWideCameraInfo)
         .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
     if (mainFocal == null || wideFocal == null || mainFocal <= 0f) {
-        return "0.6x"
+        return 0.6f
     }
-    return String.format(Locale.US, "%.1fx", wideFocal / mainFocal)
+    return wideFocal / mainFocal
 }
 
 // Lignes incrustees en haut a gauche de chaque photo : date/heure, agent terrain, position GPS
