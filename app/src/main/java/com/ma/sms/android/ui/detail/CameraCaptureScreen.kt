@@ -1,8 +1,11 @@
 package com.ma.sms.android.ui.detail
 
+import android.hardware.camera2.CameraCharacteristics
 import android.util.Log
 import android.widget.Toast
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.Camera
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -10,8 +13,10 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Camera
@@ -55,6 +60,8 @@ fun CameraCaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
+    val previewView = remember { PreviewView(context) }
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
@@ -62,6 +69,13 @@ fun CameraCaptureScreen(
     // continu : comportement d'un appareil photo classique.
     var flashEnabled by remember { mutableStateOf(false) }
     var hasFlash by remember { mutableStateOf(false) }
+
+    // Objectif ultra grand-angle : cameras physique separee sur la plupart des telephones, non
+    // accessible en dessous de 1x sur l'objectif principal (voir findUltraWideCameraInfo). Reste
+    // a null (bouton masque) sur les appareils qui n'en ont pas, comportement inchangé pour eux.
+    var ultraWideCameraInfo by remember { mutableStateOf<CameraInfo?>(null) }
+    var usingUltraWide by remember { mutableStateOf(false) }
+    var ultraWideZoomLabel by remember { mutableStateOf("0.6x") }
 
     // Nom de l'agent terrain (claims du token Keycloak) et position courante, recuperes des
     // l'ouverture de l'ecran pour etre prets au moment ou l'utilisateur declenche la capture.
@@ -74,13 +88,66 @@ fun CameraCaptureScreen(
         currentLocation = LocationHelper.getCurrentLocation(context)
     }
 
+    // Recupere le fournisseur de cameras une seule fois, puis detecte un eventuel objectif ultra
+    // grand-angle distinct de l'objectif principal (voir findUltraWideCameraInfo).
+    LaunchedEffect(Unit) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            val provider = cameraProviderFuture.get()
+            cameraProvider = provider
+            val mainCameraInfo = CameraSelector.DEFAULT_BACK_CAMERA
+                .filter(provider.availableCameraInfos)
+                .firstOrNull()
+            if (mainCameraInfo != null) {
+                val ultraWide = findUltraWideCameraInfo(provider, mainCameraInfo)
+                ultraWideCameraInfo = ultraWide
+                if (ultraWide != null) {
+                    ultraWideZoomLabel = computeZoomLabel(mainCameraInfo, ultraWide)
+                }
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    // (Re)lie la preview et la capture a l'objectif selectionne : execute au premier chargement
+    // du fournisseur de cameras, puis a chaque bascule 1x <-> ultra grand-angle.
+    LaunchedEffect(cameraProvider, usingUltraWide) {
+        val provider = cameraProvider ?: return@LaunchedEffect
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+        val capture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
+            .build()
+        imageCapture = capture
+
+        val targetUltraWide = ultraWideCameraInfo
+        val selector = if (usingUltraWide && targetUltraWide != null) {
+            CameraSelector.Builder()
+                .addCameraFilter { infos -> infos.filter { it == targetUltraWide } }
+                .build()
+        } else {
+            CameraSelector.DEFAULT_BACK_CAMERA
+        }
+
+        try {
+            provider.unbindAll()
+            val boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
+            camera = boundCamera
+            hasFlash = boundCamera.cameraInfo.hasFlashUnit()
+        } catch (e: Exception) {
+            Log.e("CameraCaptureScreen", "Echec liaison camera", e)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(camera) {
                     // Pincer pour zoomer : ratio relatif applique au zoom courant, borne aux
-                    // limites materielles du capteur (zoomState.min/maxZoomRatio).
+                    // limites materielles du capteur (zoomState.min/maxZoomRatio) de l'objectif
+                    // actuellement lie (principal ou ultra grand-angle).
                     detectTransformGestures { _, _, zoomChange, _ ->
                         val cam = camera ?: return@detectTransformGestures
                         val zoomState = cam.cameraInfo.zoomState.value ?: return@detectTransformGestures
@@ -89,36 +156,7 @@ fun CameraCaptureScreen(
                         cam.cameraControl.setZoomRatio(newRatio)
                     }
                 },
-            factory = { ctx ->
-                val previewView = PreviewView(ctx)
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    val capture = ImageCapture.Builder()
-                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                        .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
-                        .build()
-                    imageCapture = capture
-
-                    try {
-                        cameraProvider.unbindAll()
-                        val boundCamera = cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview,
-                            capture
-                        )
-                        camera = boundCamera
-                        hasFlash = boundCamera.cameraInfo.hasFlashUnit()
-                    } catch (e: Exception) {
-                        Log.e("CameraCaptureScreen", "Echec liaison camera", e)
-                    }
-                }, ContextCompat.getMainExecutor(ctx))
-                previewView
-            }
+            factory = { previewView }
         )
 
         // Mini-carte "vue de dessus" (coin bas-droit) indiquant le cote/zone a photographier : ne
@@ -163,6 +201,26 @@ fun CameraCaptureScreen(
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "Fermer", tint = Color.White)
                 }
+            }
+        }
+
+        // Bascule 1x <-> ultra grand-angle : visible seulement si l'appareil expose un objectif
+        // distinct nettement plus large que l'objectif principal (voir findUltraWideCameraInfo).
+        if (ultraWideCameraInfo != null) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 116.dp)
+                    .clickable { usingUltraWide = !usingUltraWide }
+            ) {
+                Text(
+                    text = if (usingUltraWide) "1x" else ultraWideZoomLabel,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
         }
 
@@ -214,6 +272,66 @@ fun CameraCaptureScreen(
             }
         }
     }
+}
+
+// Cherche, parmi les cameras arriere, un objectif distinct du principal dont le champ de vision
+// horizontal est nettement plus large (seuil de securite pour ecarter un capteur macro/profondeur
+// qui ne serait pas plus large). Retourne null si l'appareil n'a pas d'ultra grand-angle exploitable.
+private const val ULTRA_WIDE_FOV_THRESHOLD_DEGREES = 15.0
+
+private fun findUltraWideCameraInfo(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): CameraInfo? {
+    val backCameras = try {
+        CameraSelector.Builder()
+            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+            .build()
+            .filter(provider.availableCameraInfos)
+    } catch (e: Exception) {
+        return null
+    }
+    val mainFov = horizontalFovDegrees(mainCameraInfo) ?: return null
+
+    var widest: CameraInfo? = null
+    var widestFov = mainFov
+    for (info in backCameras) {
+        if (info == mainCameraInfo) continue
+        val fov = horizontalFovDegrees(info) ?: continue
+        if (fov > widestFov + ULTRA_WIDE_FOV_THRESHOLD_DEGREES) {
+            widestFov = fov
+            widest = info
+        }
+    }
+    return widest
+}
+
+// Champ de vision horizontal approximatif (degres), calcule depuis la focale et la largeur
+// physique du capteur : 2 * atan(largeurCapteur / (2 * focale)).
+private fun horizontalFovDegrees(cameraInfo: CameraInfo): Double? {
+    return try {
+        val characteristics = Camera2CameraInfo.from(cameraInfo)
+        val focalLength = characteristics.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            ?.firstOrNull()
+        val sensorWidth = characteristics.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            ?.width
+        if (focalLength == null || focalLength <= 0f || sensorWidth == null || sensorWidth <= 0f) {
+            return null
+        }
+        2.0 * Math.toDegrees(Math.atan((sensorWidth / (2.0 * focalLength)).toDouble()))
+    } catch (e: Exception) {
+        null
+    }
+}
+
+// Facteur de zoom approximatif affiche sur le bouton bascule ("0.6x"...), base sur le ratio des
+// focales des deux objectifs (approximation courante, memes limites qu'un appareil photo grand public).
+private fun computeZoomLabel(mainCameraInfo: CameraInfo, ultraWideCameraInfo: CameraInfo): String {
+    val mainFocal = Camera2CameraInfo.from(mainCameraInfo)
+        .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+    val wideFocal = Camera2CameraInfo.from(ultraWideCameraInfo)
+        .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+    if (mainFocal == null || wideFocal == null || mainFocal <= 0f) {
+        return "0.6x"
+    }
+    return String.format(Locale.US, "%.1fx", wideFocal / mainFocal)
 }
 
 // Lignes incrustees en haut a gauche de chaque photo : date/heure, agent terrain, position GPS
