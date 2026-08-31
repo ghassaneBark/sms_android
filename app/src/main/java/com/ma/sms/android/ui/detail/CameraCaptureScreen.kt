@@ -96,6 +96,11 @@ fun CameraCaptureScreen(
     // remise a null (masquee) apres un court delai d'inactivite, voir le LaunchedEffect associe.
     var pinchZoomRatio by remember { mutableStateOf<Float?>(null) }
 
+    // Diagnostic temporaire affiche uniquement quand aucun ultra grand-angle n'est detecte, pour
+    // comprendre pourquoi sur un appareil donne sans avoir besoin d'un acces logcat/adb (voir
+    // collectCameraDiagnostics). A retirer une fois la detection fiabilisee sur le parc reel.
+    var diagnostics by remember { mutableStateOf<String?>(null) }
+
     // Nom de l'agent terrain (claims du token Keycloak) et position courante, recuperes des
     // l'ouverture de l'ecran pour etre prets au moment ou l'utilisateur declenche la capture.
     val agentName = remember {
@@ -134,6 +139,10 @@ fun CameraCaptureScreen(
                     ultraWideZoomFactor = found.zoomFactor
                 }
                 Log.i(TAG, "Detection ultra grand-angle : ${if (found != null) "trouve (physicalCameraId=${found.physicalCameraId}, facteur=${found.zoomFactor})" else "aucun"}")
+                if (found == null) {
+                    diagnostics = collectCameraDiagnostics(provider, mainCameraInfo)
+                    Log.i(TAG, "Diagnostic : $diagnostics")
+                }
             }
         }, ContextCompat.getMainExecutor(context))
     }
@@ -250,6 +259,21 @@ fun CameraCaptureScreen(
             }
         }
 
+        // Diagnostic temporaire (voir collectCameraDiagnostics) : uniquement quand aucun ultra
+        // grand-angle n'est detecte, pour comprendre pourquoi sans acces logcat/adb.
+        diagnostics?.let { diag ->
+            Text(
+                text = diag,
+                color = Color.Yellow,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 64.dp, start = 12.dp, end = 12.dp)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(8.dp)
+            )
+        }
+
         // Bascule 1x <-> ultra grand-angle : visible seulement si l'appareil expose un objectif
         // nettement plus large que l'objectif principal (voir findUltraWideCamera).
         if (ultraWideCamera != null) {
@@ -363,6 +387,45 @@ private fun findUltraWideCamera(provider: ProcessCameraProvider, mainCameraInfo:
         return UltraWideCamera(separate, null, factor)
     }
     return findUltraWidePhysicalCamera(mainCameraInfo)
+}
+
+// Diagnostic temporaire (voir le champ "diagnostics" dans CameraCaptureScreen) : resume ce que
+// les deux strategies de detection ont vu, pour comprendre sans logcat pourquoi aucun ultra
+// grand-angle n'a ete retenu sur un appareil donne (aucun second capteur back, FOV insuffisant,
+// caracteristiques illisibles...).
+private fun collectCameraDiagnostics(provider: ProcessCameraProvider, mainCameraInfo: CameraInfo): String {
+    val sb = StringBuilder()
+    try {
+        val backCameras = CameraSelector.Builder()
+            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+            .build()
+            .filter(provider.availableCameraInfos)
+        sb.append("back=${backCameras.size}")
+        sb.append(" fovs=[")
+        sb.append(backCameras.joinToString(",") { info ->
+            val id = try { Camera2CameraInfo.from(info).cameraId } catch (e: Exception) { "?" }
+            val fov = horizontalFovDegrees(info)
+            "$id:${fov?.let { "%.0f°".format(it) } ?: "?"}"
+        })
+        sb.append("]")
+    } catch (e: Exception) {
+        sb.append("back=err(${e.javaClass.simpleName})")
+    }
+
+    try {
+        val map = Camera2CameraInfo.from(mainCameraInfo).cameraCharacteristicsMap
+        sb.append(" logical=${map.size}")
+        sb.append(" physIds=[")
+        sb.append(map.entries.joinToString(",") { (id, characteristics) ->
+            val fov = fovFromCharacteristics(characteristics)
+            "$id:${fov?.let { "%.0f°".format(it) } ?: "?"}"
+        })
+        sb.append("]")
+    } catch (e: Exception) {
+        sb.append(" logical=err(${e.javaClass.simpleName})")
+    }
+
+    return sb.toString()
 }
 
 // Cas 1 (materiel plus ancien/simple) : un objectif ultra grand-angle expose comme CameraInfo
