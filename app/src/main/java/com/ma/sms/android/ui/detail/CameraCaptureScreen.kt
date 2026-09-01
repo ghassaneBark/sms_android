@@ -2,6 +2,8 @@ package com.ma.sms.android.ui.detail
 
 import android.hardware.camera2.CameraCharacteristics
 import android.util.Log
+import android.view.OrientationEventListener
+import android.view.Surface
 import android.widget.Toast
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
@@ -79,6 +81,29 @@ fun CameraCaptureScreen(
     var flashEnabled by remember { mutableStateOf(false) }
     var hasFlash by remember { mutableStateOf(false) }
 
+    // Rotation cible de la capture, suivie en continu independamment de l'orientation de l'UI
+    // (qui reste fixe en portrait) : sans cela, une photo prise telephone a l'horizontale est
+    // enregistree avec la meme orientation qu'une photo verticale, et s'affiche mal ensuite.
+    var targetRotation by remember { mutableIntStateOf(Surface.ROTATION_0) }
+    DisposableEffect(Unit) {
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                targetRotation = when {
+                    orientation >= 315 || orientation < 45 -> Surface.ROTATION_0
+                    orientation < 135 -> Surface.ROTATION_270
+                    orientation < 225 -> Surface.ROTATION_180
+                    else -> Surface.ROTATION_90
+                }
+            }
+        }
+        listener.enable()
+        onDispose { listener.disable() }
+    }
+    LaunchedEffect(targetRotation) {
+        imageCapture?.targetRotation = targetRotation
+    }
+
     // Objectif ultra grand-angle, non accessible en dessous de 1x sur l'objectif principal (voir
     // findUltraWideCamera). Deux cas de figure existent selon le materiel : soit une CameraInfo
     // arriere totalement distincte, soit (le plus courant sur les telephones recents) un
@@ -146,6 +171,7 @@ fun CameraCaptureScreen(
         val captureBuilder = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
+            .setTargetRotation(targetRotation)
 
         val target = ultraWideCamera
         val selector = if (usingUltraWide && target != null) {
