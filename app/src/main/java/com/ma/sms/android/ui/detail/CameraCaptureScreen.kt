@@ -201,12 +201,6 @@ fun CameraCaptureScreen(
             val boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
             camera = boundCamera
             hasFlash = boundCamera.cameraInfo.hasFlashUnit()
-            // Force explicitement le zoom a 1.0x plutot que de faire confiance au cadrage par
-            // defaut du HAL a l'ouverture : sur certains telephones (Oppo/Realme/OnePlus -
-            // ColorOS notamment), ce cadrage par defaut n'est pas fiable sur les cameras
-            // "logiques" multi-objectifs et donne une image deja legerement zoomee malgre un
-            // zoom affiche a 1.0x.
-            boundCamera.cameraControl.setZoomRatio(1.0f)
             Log.i(TAG, "Camera liee : usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId}")
         } catch (e: Exception) {
             Log.e(TAG, "Echec liaison camera (usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId})", e)
