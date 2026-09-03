@@ -1,6 +1,7 @@
 package com.ma.sms.android.ui.detail
 
 import android.hardware.camera2.CameraCharacteristics
+import android.os.Build
 import android.util.Log
 import android.view.OrientationEventListener
 import android.view.Surface
@@ -124,6 +125,16 @@ fun CameraCaptureScreen(
     // remise a null (masquee) apres un court delai d'inactivite, voir le LaunchedEffect associe.
     var pinchZoomRatio by remember { mutableStateOf<Float?>(null) }
 
+    // Diagnostic temporaire (voir collectZoomDiagnostics) : plusieurs utilisateurs (dont au moins
+    // un sur Oppo, mais pas seulement) rapportent une impression de zoom des l'ouverture de la
+    // camera malgre un zoom affiche a 1.0x. Deux hypotheses deja testees et infirmees en
+    // conditions reelles (zoom HAL force a 1.0x, puis alignement du ratio preview/capture) :
+    // affiche les valeurs materielles reelles (zoom min/max/actuel, resolutions et cropRect
+    // effectivement accordes a Preview et ImageCapture, focale, taille du capteur) pour
+    // diagnostiquer avec des faits plutot que des hypotheses. A retirer une fois la cause
+    // identifiee et corrigee.
+    var diagnostics by remember { mutableStateOf<String?>(null) }
+
     // Nom de l'agent terrain (claims du token Keycloak) et position courante, recuperes des
     // l'ouverture de l'ecran pour etre prets au moment ou l'utilisateur declenche la capture.
     val agentName = remember {
@@ -218,6 +229,8 @@ fun CameraCaptureScreen(
             camera = boundCamera
             hasFlash = boundCamera.cameraInfo.hasFlashUnit()
             Log.i(TAG, "Camera liee : usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId}")
+            diagnostics = collectZoomDiagnostics(boundCamera, preview, capture)
+            Log.i(TAG, "Diagnostic zoom : $diagnostics")
         } catch (e: Exception) {
             Log.e(TAG, "Echec liaison camera (usingUltraWide=$usingUltraWide, physicalCameraId=${target?.physicalCameraId})", e)
         }
@@ -246,6 +259,21 @@ fun CameraCaptureScreen(
                 },
             factory = { previewView }
         )
+
+        // Diagnostic temporaire (voir collectZoomDiagnostics) : a retirer une fois la cause de
+        // l'impression de zoom identifiee et corrigee.
+        diagnostics?.let { diag ->
+            Text(
+                text = diag,
+                color = Color.Yellow,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 64.dp, start = 12.dp, end = 12.dp)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(8.dp)
+            )
+        }
 
         // Mini-carte "vue de dessus" (coin bas-droit) indiquant le cote/zone a photographier : ne
         // recouvre pas l'apercu camera, contrairement a une silhouette en plein ecran. N'affiche
@@ -394,6 +422,44 @@ private data class UltraWideCamera(
     val physicalCameraId: String?,
     val zoomFactor: Float
 )
+
+// Diagnostic temporaire (voir le champ "diagnostics" dans CameraCaptureScreen) : resume les
+// valeurs materielles reelles de zoom et de cadrage juste apres la liaison de la camera, pour
+// comprendre sans logcat/adb pourquoi l'apercu semble "deja zoome" sur certains appareils alors
+// que le zoom logique reste a 1.0x. resolutionInfo expose la resolution ET le cropRect
+// effectivement accordes a chaque flux (Preview vs ImageCapture) : le point precis a verifier.
+private fun collectZoomDiagnostics(camera: Camera, preview: Preview, capture: ImageCapture): String {
+    val sb = StringBuilder()
+    sb.append("${Build.MANUFACTURER} ${Build.MODEL}")
+    try {
+        val zoom = camera.cameraInfo.zoomState.value
+        sb.append("\nzoom=${zoom?.zoomRatio} [${zoom?.minZoomRatio}-${zoom?.maxZoomRatio}]")
+    } catch (e: Exception) {
+        sb.append("\nzoom=err(${e.javaClass.simpleName})")
+    }
+    try {
+        val pRes = preview.resolutionInfo
+        sb.append("\npreview=${pRes?.resolution} crop=${pRes?.cropRect}")
+    } catch (e: Exception) {
+        sb.append("\npreview=err(${e.javaClass.simpleName})")
+    }
+    try {
+        val cRes = capture.resolutionInfo
+        sb.append("\ncapture=${cRes?.resolution} crop=${cRes?.cropRect}")
+    } catch (e: Exception) {
+        sb.append("\ncapture=err(${e.javaClass.simpleName})")
+    }
+    try {
+        val characteristics = Camera2CameraInfo.extractCameraCharacteristics(camera.cameraInfo)
+        val focal = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+        val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val physSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        sb.append("\nfocal=$focal active=$active physSize=$physSize")
+    } catch (e: Exception) {
+        sb.append("\nsensor=err(${e.javaClass.simpleName})")
+    }
+    return sb.toString()
+}
 
 // Seuil de securite (degres) pour qu'un objectif soit considere comme "nettement plus large" que
 // le principal, et ecarter les fausses detections (capteur macro/profondeur, pas plus large).
