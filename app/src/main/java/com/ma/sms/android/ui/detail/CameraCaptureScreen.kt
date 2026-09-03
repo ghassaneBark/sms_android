@@ -181,16 +181,16 @@ fun CameraCaptureScreen(
     // du fournisseur de cameras, puis a chaque bascule 1x <-> ultra grand-angle.
     LaunchedEffect(cameraProvider, usingUltraWide) {
         val provider = cameraProvider ?: return@LaunchedEffect
-        // Meme strategie de ratio d'aspect pour Preview et ImageCapture : sans ca, CameraX choisit
-        // independamment une resolution proche du PreviewView (ecran, souvent tres "haut", ex.
-        // ~19.5:9) pour l'apercu et une resolution proche de 4:3 pour la capture. La PreviewView,
-        // en mode FILL_CENTER (recadrage pour remplir l'ecran), rogne alors fortement l'apercu
-        // affiche pour compenser cet ecart de ratio, ce qui donne une impression de zoom a l'usage
-        // meme si le zoom reel est a 1.0x -- la photo enregistree, elle, garde le cadrage complet.
-        // En forcant le meme ratio (16:9) des les deux flux, l'apercu montre fidelement ce qui sera
-        // capture.
+        // Meme strategie de ratio d'aspect pour Preview et ImageCapture, pour que l'apercu montre
+        // fidelement ce qui sera capture (voir plus bas pourquoi 4:3 et pas 16:9). Diagnostic reel
+        // (Xiaomi 23117RA68G) : le capteur est nativement en 4:3 (active=4080x3072, ratio 1.33).
+        // Un premier essai en force-16:9 donnait preview=1920x1080/capture=3264x1840 -- coherents
+        // entre eux, mais ~25% du champ de vision vertical natif du capteur rogne par rapport a du
+        // 4:3 (3264x2448 attendu), ce qui recreait artificiellement l'impression de zoom pourtant
+        // deja corrigee cote coherence preview/capture. 4:3 = plein champ de vision natif, sans
+        // rognage, tout en gardant preview et capture alignes entre eux.
         val resolutionSelector = ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy(AspectRatio.RATIO_16_9, AspectRatioStrategy.FALLBACK_RULE_AUTO))
+            .setAspectRatioStrategy(AspectRatioStrategy(AspectRatio.RATIO_4_3, AspectRatioStrategy.FALLBACK_RULE_AUTO))
             .build()
         val previewBuilder = Preview.Builder()
             .setResolutionSelector(resolutionSelector)
