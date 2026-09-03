@@ -75,7 +75,14 @@ fun CameraCaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
-    val previewView = remember { PreviewView(context) }
+    // FIT_CENTER (pas le FILL_CENTER par defaut) : le flux Preview est desormais aligne au ratio
+    // natif 4:3 du capteur (voir plus bas), plus "carre" qu'un ecran de telephone (tres allonge en
+    // portrait). En FILL_CENTER, la PreviewView agrandissait ce flux 4:3 jusqu'a remplir tout
+    // l'ecran, rognant une bonne partie du haut/bas de l'image affichee -- exactement ce qui
+    // donnait l'impression de zoom pendant la prise de vue (confirme : uniquement l'apercu, pas la
+    // photo finale, deja correcte). FIT_CENTER affiche le flux entier sans le rogner, avec des
+    // bandes noires sur les cotes plutot qu'un recadrage invisible.
+    val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FIT_CENTER } }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
