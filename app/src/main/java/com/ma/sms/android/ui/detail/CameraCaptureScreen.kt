@@ -8,12 +8,15 @@ import android.widget.Toast
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -167,8 +170,21 @@ fun CameraCaptureScreen(
     // du fournisseur de cameras, puis a chaque bascule 1x <-> ultra grand-angle.
     LaunchedEffect(cameraProvider, usingUltraWide) {
         val provider = cameraProvider ?: return@LaunchedEffect
+        // Meme strategie de ratio d'aspect pour Preview et ImageCapture : sans ca, CameraX choisit
+        // independamment une resolution proche du PreviewView (ecran, souvent tres "haut", ex.
+        // ~19.5:9) pour l'apercu et une resolution proche de 4:3 pour la capture. La PreviewView,
+        // en mode FILL_CENTER (recadrage pour remplir l'ecran), rogne alors fortement l'apercu
+        // affiche pour compenser cet ecart de ratio, ce qui donne une impression de zoom a l'usage
+        // meme si le zoom reel est a 1.0x -- la photo enregistree, elle, garde le cadrage complet.
+        // En forcant le meme ratio (16:9) des les deux flux, l'apercu montre fidelement ce qui sera
+        // capture.
+        val resolutionSelector = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(AspectRatioStrategy(AspectRatio.RATIO_16_9, AspectRatioStrategy.FALLBACK_RULE_AUTO))
+            .build()
         val previewBuilder = Preview.Builder()
+            .setResolutionSelector(resolutionSelector)
         val captureBuilder = ImageCapture.Builder()
+            .setResolutionSelector(resolutionSelector)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
             .setTargetRotation(targetRotation)
