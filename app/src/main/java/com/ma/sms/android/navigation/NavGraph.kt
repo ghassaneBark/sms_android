@@ -9,6 +9,7 @@ import androidx.navigation.navArgument
 import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.ui.detail.DossierDetailScreen
 import com.ma.sms.android.ui.dossiers.DossierListScreen
+import com.ma.sms.android.ui.express.DossierExpressScreen
 import com.ma.sms.android.ui.login.LoginScreen
 
 sealed class Screen(val route: String) {
@@ -17,6 +18,7 @@ sealed class Screen(val route: String) {
     object DossierDetail : Screen("dossiers/{id}") {
         fun buildRoute(id: Long) = "dossiers/$id"
     }
+    object DossierExpress : Screen("dossiers/express")
 }
 
 @Composable
@@ -41,6 +43,9 @@ fun NavGraph(navController: NavHostController, app: SmsApplication) {
                 onDossierClick = { id ->
                     navController.navigate(Screen.DossierDetail.buildRoute(id))
                 },
+                onNewDossierExpress = {
+                    navController.navigate(Screen.DossierExpress.route)
+                },
                 onLogout = {
                     app.authManager.logout()
                     navController.navigate(Screen.Login.route) {
@@ -59,6 +64,14 @@ fun NavGraph(navController: NavHostController, app: SmsApplication) {
                 dossierId = id,
                 repository = app.dossierRepository,
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.DossierExpress.route) {
+            DossierExpressScreen(
+                repository = app.dossierRepository,
+                onBack = { navController.popBackStack() },
+                onFinished = { navController.popBackStack() }
             )
         }
     }

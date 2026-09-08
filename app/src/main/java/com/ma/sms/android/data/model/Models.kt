@@ -26,7 +26,8 @@ data class Dossier(
     val agentTerrainUserId: String?,
     val assignedUserId: String?,
     val antenne: AntenneRef?,
-    val documents: List<DocumentSinistre>?
+    val documents: List<DocumentSinistre>?,
+    val accordForfaits: List<AccordForfait>? = null
 )
 
 data class AntenneRef(
@@ -51,7 +52,8 @@ data class Assure(
     val telephone: String?,
     val email: String?,
     val adresse: String?,
-    val type: String?
+    val type: String?,
+    val intermediaire: String? = null
 )
 
 data class Assurance(
@@ -64,7 +66,25 @@ data class Vehicule(
     val marque: String?,
     val modele: String?,
     val usage: String?,
-    val adresse: String?
+    val adresse: String?,
+    val numeroChassis: String? = null
+)
+
+/** Une proposition de forfait pour un dossier (accord/reponse assure, cf. flux "Dossier Express"). */
+data class AccordForfait(
+    val id: Long? = null,
+    val typeAccord: String = "FORFAIT",
+    val montantForfait: Double,
+    val reponseAssureForfait: Boolean? = null
+)
+
+/** Corps de la requete de creation d'un dossier depuis le terrain ("Dossier Express"). */
+data class DossierExpressCreateRequest(
+    val assure: Assure,
+    val assurance: Assurance,
+    val vehiculeAssure: Vehicule?,
+    val agentTerrainUserId: String?,
+    val agentTerrainUserErId: String? = null
 )
 
 data class DocumentSinistre(

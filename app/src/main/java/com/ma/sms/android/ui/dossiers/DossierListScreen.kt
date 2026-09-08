@@ -28,6 +28,7 @@ import com.ma.sms.android.data.repository.DossierRepository
 fun DossierListScreen(
     repository: DossierRepository,
     onDossierClick: (Long) -> Unit,
+    onNewDossierExpress: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     val vm: DossierListViewModel = viewModel(factory = object : ViewModelProvider.Factory {
@@ -82,6 +83,11 @@ fun DossierListScreen(
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNewDossierExpress) {
+                Icon(Icons.Default.Add, contentDescription = "Nouveau dossier express")
+            }
         }
     ) { padding ->
         PullToRefreshBox(

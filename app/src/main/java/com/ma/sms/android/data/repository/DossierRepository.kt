@@ -4,8 +4,10 @@ import android.content.Context
 import android.net.Uri
 import com.ma.sms.android.data.api.ApiService
 import com.ma.sms.android.data.model.AgentTerrainUser
+import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
 import okhttp3.MediaType.Companion.toMediaType
@@ -26,6 +28,26 @@ class DossierRepository(private val api: ApiService, private val context: Contex
 
     suspend fun getDocuments(dossierId: Long): Result<List<DocumentSinistre>> = runCatching {
         api.getDocuments(dossierId)
+    }
+
+    /** Cree un nouveau dossier depuis le terrain ("Dossier Express"). */
+    suspend fun createDossierExpress(request: DossierExpressCreateRequest): Result<Dossier> = runCatching {
+        api.createDossier(request)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    /** Met a jour le dossier (DTO complet attendu par le backend, ex: proposition/reponse de forfait). */
+    suspend fun updateDossier(dossierId: Long, dossier: Dossier): Result<Dossier> = runCatching {
+        api.updateDossier(dossierId, dossier)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun listAssurances(): Result<List<Assurance>> = runCatching {
+        api.getAssurances()
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
     }
 
     suspend fun uploadPhoto(dossierId: Long, photoFile: File, documentType: String): Result<DocumentSinistre> = runCatching {

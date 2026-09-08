@@ -1,8 +1,10 @@
 package com.ma.sms.android.data.api
 
 import com.ma.sms.android.data.model.AgentTerrainUser
+import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.PageResponse
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
@@ -19,6 +21,15 @@ interface ApiService {
 
     @GET("api/dossier/{id}")
     suspend fun getDossier(@Path("id") id: Long): Dossier
+
+    @POST("api/dossier")
+    suspend fun createDossier(@Body body: DossierExpressCreateRequest): Dossier
+
+    @PUT("api/dossier/{id}")
+    suspend fun updateDossier(@Path("id") id: Long, @Body body: Dossier): Dossier
+
+    @GET("api/assurance")
+    suspend fun getAssurances(): List<Assurance>
 
     @GET("api/dossier/{id}/documents")
     suspend fun getDocuments(@Path("id") id: Long): List<DocumentSinistre>
