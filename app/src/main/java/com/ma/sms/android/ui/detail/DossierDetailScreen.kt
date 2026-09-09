@@ -158,8 +158,12 @@ fun isAngleUploadedForState(angle: VehicleAngle, etat: String?, documents: List<
         (doc.originalFileName ?: doc.fileName ?: "").startsWith(angleFileKeyForState(angle, etat))
     }
 
+// "En cours de reparation" n'a plus de croquis/angles (voir DossierDetailScreen, invocation de
+// CarDiagramCard) : la condition "tous les angles requis faits" n'a donc plus de sens pour cet
+// etat et doit etre consideree comme toujours remplie, sinon "Fin de mission" resterait bloque.
 fun allRequiredAnglesDoneForState(etat: String?, documents: List<DocumentSinistre>): Boolean =
-    VEHICLE_ANGLES.filter { it.required }.all { isAngleUploadedForState(it, etat, documents) }
+    etat == "ATTENTE_EXPERTISE_SR"
+        || VEHICLE_ANGLES.filter { it.required }.all { isAngleUploadedForState(it, etat, documents) }
 
 // Document deja envoye correspondant a un angle donne, pour permettre sa consultation.
 fun findAngleDocument(angle: VehicleAngle, etat: String?, documents: List<DocumentSinistre>): DocumentSinistre? =
@@ -440,14 +444,19 @@ fun DossierDetailScreen(
                             )
                         }
 
-                        CarDiagramCard(
-                            etat = etat,
-                            documents = state.documents,
-                            pendingPhotos = state.pendingPhotos,
-                            onTakePhoto = { docType -> launchCamera(docType) },
-                            onViewDocument = { doc -> vm.viewDocument(doc) },
-                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
-                        )
+                        // "En cours de reparation" (ATTENTE_EXPERTISE_SR) : plus de croquis/angles
+                        // impose, seulement des photos libres (voir ExtraVehiclePhotosCard
+                        // ci-dessous, qui devient alors la seule action de capture disponible).
+                        if (etat != "ATTENTE_EXPERTISE_SR") {
+                            CarDiagramCard(
+                                etat = etat,
+                                documents = state.documents,
+                                pendingPhotos = state.pendingPhotos,
+                                onTakePhoto = { docType -> launchCamera(docType) },
+                                onViewDocument = { doc -> vm.viewDocument(doc) },
+                                onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
+                            )
+                        }
 
                         // Photos supplementaires (optionnelles) : disponibles a chaque phase
                         // (avant/en cours/apres reparation), filtrees pour ne montrer que celles
