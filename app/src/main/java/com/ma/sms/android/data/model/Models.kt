@@ -84,7 +84,8 @@ data class DossierExpressCreateRequest(
     val assurance: Assurance,
     val vehiculeAssure: Vehicule?,
     val agentTerrainUserId: String?,
-    val agentTerrainUserErId: String? = null
+    val agentTerrainUserErId: String? = null,
+    val express: Boolean = true
 )
 
 data class DocumentSinistre(

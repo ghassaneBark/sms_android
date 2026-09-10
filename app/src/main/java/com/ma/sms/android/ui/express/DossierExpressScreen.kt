@@ -119,7 +119,7 @@ fun DossierExpressScreen(
 
             when {
                 etat == "FORFAIT_ACCEPTE" -> SuccessSection(reference = state.dossier?.reference, onBack = onFinished)
-                etat == "EN_ATTENTE_ACCORD_FORFAIT" -> ForfaitSection(state = state, vm = vm)
+                etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showForfaitSection -> ForfaitSection(state = state, vm = vm, onBack = vm::backToDocuments)
                 else -> FormAndDocumentsSection(
                     state = state,
                     vm = vm,
@@ -151,10 +151,16 @@ private fun SuccessSection(reference: String?, onBack: () -> Unit) {
 }
 
 @Composable
-private fun ForfaitSection(state: DossierExpressUiState, vm: DossierExpressViewModel) {
+private fun ForfaitSection(state: DossierExpressUiState, vm: DossierExpressViewModel, onBack: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionTitle("Proposition de forfait")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Retour aux documents")
+                }
+                Spacer(Modifier.width(4.dp))
+                SectionTitle("Proposition de forfait")
+            }
             Text(
                 "Le dossier est prêt pour la proposition de forfait à l'assuré.",
                 style = MaterialTheme.typography.bodySmall,
@@ -283,12 +289,33 @@ private fun FormAndDocumentsSection(
             Text(if (dossierCreated) "Enregistrer" else "Créer le dossier")
         }
     }
+
+    // Mission terrain et forfait partagent le meme etat TRAITEMENT_DOSSIER_EXPRESS : ce bouton
+    // (pas un changement d'etat backend) est ce qui fait passer a la section forfait, une fois
+    // les pieces requises reellement televersees (pas seulement en attente d'envoi).
+    if (state.dossier?.etat == "TRAITEMENT_DOSSIER_EXPRESS" && requiredExpressDocumentsUploaded(state)) {
+        Button(
+            onClick = { vm.continueToForfait() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Continuer vers le forfait")
+        }
+    }
 }
 
 private fun documentCount(state: DossierExpressUiState, docType: String): Int {
     val uploaded = state.documents.count { it.type == docType }
     val pending = state.pendingPhotos.count { it.docType == docType }
     return uploaded + pending
+}
+
+private fun requiredExpressDocumentsUploaded(state: DossierExpressUiState): Boolean {
+    fun uploaded(type: String) = state.documents.any { it.type == type }
+    return uploaded(DOC_TYPE_PHOTO_VEHICULE) &&
+        uploaded(DOC_TYPE_CARTE_GRISE) &&
+        uploaded(DOC_TYPE_ATTESTATION_ASSURANCE) &&
+        uploaded(DOC_TYPE_GARANTIE) &&
+        JUSTIFICATIF_TYPES.any { type -> state.documents.any { it.type == type } }
 }
 
 @Composable

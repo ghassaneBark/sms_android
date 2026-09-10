@@ -43,9 +43,7 @@ const val DEFAULT_JUSTIFICATIF_TYPE = "Déclaration sur l'honneur"
 
 val EXPRESS_STATES_BEFORE_FORFAIT = setOf(
     "BROUILLON",
-    "EN_ATTENTE_AFFECTATION",
-    "AFFECTATION_AGENT_TERRAIN",
-    "EN_ATTENTE_COMPLEMENT_DOCUMENT"
+    "EN_ATTENTE_AFFECTATION"
 )
 
 data class DossierExpressUiState(
@@ -75,7 +73,11 @@ data class DossierExpressUiState(
     val error: String? = null,
     val statusMessage: String? = null,
 
-    // Etape C : proposition de forfait
+    // Etape C : proposition de forfait. Bascule locale (pas derivee de l'etat backend) : dans
+    // TRAITEMENT_DOSSIER_EXPRESS, mission terrain et forfait partagent le meme etat, donc c'est
+    // ce flag qui decide quelle section afficher, une fois les pieces requises televersees
+    // (voir requiredExpressDocumentsUploaded dans DossierExpressScreen.kt).
+    val showForfaitSection: Boolean = false,
     val montantForfait: String = "",
     val reponseAssureForfait: Boolean? = null,
     val isSubmittingForfait: Boolean = false,
@@ -127,6 +129,8 @@ class DossierExpressViewModel(
     fun selectJustificatifType(type: String) { _uiState.value = _uiState.value.copy(justificatifType = type) }
     fun updateMontantForfait(v: String) { _uiState.value = _uiState.value.copy(montantForfait = v) }
     fun selectReponseAssureForfait(accepted: Boolean) { _uiState.value = _uiState.value.copy(reponseAssureForfait = accepted) }
+    fun continueToForfait() { _uiState.value = _uiState.value.copy(showForfaitSection = true) }
+    fun backToDocuments() { _uiState.value = _uiState.value.copy(showForfaitSection = false) }
 
     fun addPendingPhoto(file: File, docType: String) {
         val current = _uiState.value.pendingPhotos.toMutableList()
@@ -247,7 +251,7 @@ class DossierExpressViewModel(
             val advanced = result.getOrNull()
             if (advanced != null) {
                 _uiState.value = _uiState.value.copy(dossier = advanced)
-                if (advanced.etat == "EN_ATTENTE_ACCORD_FORFAIT") {
+                if (advanced.etat == "TRAITEMENT_DOSSIER_EXPRESS") {
                     return "Prêt pour la proposition de forfait."
                 }
                 continue
@@ -284,14 +288,18 @@ class DossierExpressViewModel(
             assurance = Assurance(id = state.selectedAssuranceId ?: 0L, nom = null),
             vehiculeAssure = vehicule,
             agentTerrainUserId = agentTerrainUserId,
-            agentTerrainUserErId = null
+            agentTerrainUserErId = null,
+            express = true
         )
     }
 
     /**
-     * "Fin de mission" (etapes 4 a 7) : propose le forfait, avance l'etat, enregistre la reponse
-     * de l'assure puis avance a nouveau. Un refus n'est pas une erreur : le dossier repasse a
-     * EN_ATTENTE_ACCORD_FORFAIT et l'agent peut retenter avec un nouveau montant.
+     * "Terminer mission" : le dossier est dans l'etat unique TRAITEMENT_DOSSIER_EXPRESS, qui
+     * couvre a la fois la mission terrain et le forfait. Montant et reponse assure sont saisis
+     * ensemble par l'agent (sur place, il a deja les deux en main), donc un seul PUT (une seule
+     * entree AccordForfait avec les deux champs) suivi d'un seul advance-state suffit : le
+     * backend valide tout d'un coup puis route vers FORFAIT_ACCEPTE (accepte) ou boucle sur
+     * TRAITEMENT_DOSSIER_EXPRESS (refuse, l'agent peut alors ressaisir un nouveau montant).
      */
     fun submitForfait() {
         val state = _uiState.value
@@ -311,54 +319,30 @@ class DossierExpressViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSubmittingForfait = true, error = null, forfaitResult = null)
 
-            // Etape 4 : proposition du montant
-            val proposalDossier = _uiState.value.dossier!!.copy(
-                accordForfaits = listOf(AccordForfait(typeAccord = "FORFAIT", montantForfait = montant))
-            )
-            val step4 = repository.updateDossier(dossierId, proposalDossier)
-            val afterStep4 = step4.getOrNull()
-            if (afterStep4 == null) {
-                failForfait(step4.exceptionOrNull(), "Impossible d'enregistrer la proposition de forfait.")
-                return@launch
-            }
-            _uiState.value = _uiState.value.copy(dossier = afterStep4)
-            val accordId = afterStep4.accordForfaits?.lastOrNull()?.id
-
-            // Etape 5 : avance vers ATTENTE_REPONSE_ASSURE_FORFAIT
-            val step5 = repository.advanceState(dossierId)
-            val afterStep5 = step5.getOrNull()
-            if (afterStep5 == null) {
-                failForfait(step5.exceptionOrNull(), "Impossible de faire avancer le dossier après la proposition.")
-                return@launch
-            }
-            _uiState.value = _uiState.value.copy(dossier = afterStep5)
-
-            // Etape 6 : enregistrement de la reponse de l'assure (reponseAssureForfait doit etre
-            // porte par l'entree AccordForfait elle-meme, pas par le Dossier : c'est le champ que
-            // le backend lit reellement, cf. AccordForfaitDto cote serveur).
-            val responseDossier = afterStep5.copy(
+            // Proposition + reponse ensemble, dans la meme entree AccordForfait.
+            val proposalDossier = dossier.copy(
                 accordForfaits = listOf(
-                    AccordForfait(id = accordId, typeAccord = "FORFAIT", montantForfait = montant, reponseAssureForfait = reponse)
+                    AccordForfait(typeAccord = "FORFAIT", montantForfait = montant, reponseAssureForfait = reponse)
                 )
             )
-            val step6 = repository.updateDossier(dossierId, responseDossier)
-            val afterStep6 = step6.getOrNull()
-            if (afterStep6 == null) {
-                failForfait(step6.exceptionOrNull(), "Impossible d'enregistrer la réponse de l'assuré.")
+            val putResult = repository.updateDossier(dossierId, proposalDossier)
+            val afterPut = putResult.getOrNull()
+            if (afterPut == null) {
+                failForfait(putResult.exceptionOrNull(), "Impossible d'enregistrer la proposition de forfait.")
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(dossier = afterStep6)
+            _uiState.value = _uiState.value.copy(dossier = afterPut)
 
-            // Etape 7 : routage final
-            val step7 = repository.advanceState(dossierId)
-            val afterStep7 = step7.getOrNull()
-            if (afterStep7 == null) {
-                failForfait(step7.exceptionOrNull(), "Impossible de finaliser le dossier.")
+            // Routage final : accepte -> FORFAIT_ACCEPTE, refuse -> boucle sur TRAITEMENT_DOSSIER_EXPRESS.
+            val advanceResult = repository.advanceState(dossierId)
+            val afterAdvance = advanceResult.getOrNull()
+            if (afterAdvance == null) {
+                failForfait(advanceResult.exceptionOrNull(), "Impossible de finaliser le dossier.")
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(dossier = afterStep7, isSubmittingForfait = false)
+            _uiState.value = _uiState.value.copy(dossier = afterAdvance, isSubmittingForfait = false)
 
-            if (afterStep7.etat == "FORFAIT_ACCEPTE") {
+            if (afterAdvance.etat == "FORFAIT_ACCEPTE") {
                 _uiState.value = _uiState.value.copy(forfaitResult = "Forfait accepté. Dossier finalisé.")
                 _finished.emit(Unit)
             } else {
