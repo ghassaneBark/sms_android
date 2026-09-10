@@ -209,7 +209,8 @@ private val JUSTIFICATIF_SUBTYPES = listOf(
 
 private val FACTURE_TYPES = listOf("FACTURE PC ORIGINAL", "FACTURE PC RECUPERATION")
 
-private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
+// Publique (pas private) : reutilisee par ui/express/DossierExpressScreen.kt.
+fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
     // En cours/apres reparation : la capture photo obligatoire de la phase se fait via le
     // diagramme (CarDiagramCard) ; Carte grise/Assurance sont consultables uniquement, donc
     // plus aucun bouton de capture generique n'est propose ici.
@@ -910,8 +911,9 @@ private fun PreviousPhasePhotosCard(
 }
 
 // --- Card autres documents ---
+// Publique (pas private) : reutilisee par ui/express/DossierExpressScreen.kt.
 @Composable
-private fun OtherDocumentsCard(
+fun OtherDocumentsCard(
     etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,

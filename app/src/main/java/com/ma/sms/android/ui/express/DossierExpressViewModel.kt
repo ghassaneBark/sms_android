@@ -10,6 +10,7 @@ import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Vehicule
 import com.ma.sms.android.data.repository.DossierRepository
+import com.ma.sms.android.ui.detail.FileToOpen
 import com.ma.sms.android.ui.detail.PendingPhoto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -27,7 +28,8 @@ private const val MAX_CONCURRENT_PHOTO_UPLOADS = 4
 private const val MAX_ADVANCE_STATE_ITERATIONS = 10
 
 // --- Types de documents obligatoires avant de pouvoir proposer un forfait (cf. contrat backend) ---
-const val DOC_TYPE_PHOTO_VEHICULE = "Photos vehicules avant reparation"
+// Photos vehicules : desormais gerees via le vrai diagramme (CarDiagramCard, VEHICLE_ANGLES,
+// allRequiredAnglesDoneForState), donc plus de constante de type generique ici.
 const val DOC_TYPE_CARTE_GRISE = "Carte grise"
 const val DOC_TYPE_ATTESTATION_ASSURANCE = "Attestation assurance"
 const val DOC_TYPE_GARANTIE = "Garantie"
@@ -72,6 +74,8 @@ data class DossierExpressUiState(
     val isSaving: Boolean = false,
     val error: String? = null,
     val statusMessage: String? = null,
+    val fileToOpen: FileToOpen? = null,
+    val isDownloading: Boolean = false,
 
     // Etape C : proposition de forfait. Bascule locale (pas derivee de l'etat backend) : dans
     // TRAITEMENT_DOSSIER_EXPRESS, mission terrain et forfait partagent le meme etat, donc c'est
@@ -147,6 +151,55 @@ class DossierExpressViewModel(
 
     fun dismissMessages() {
         _uiState.value = _uiState.value.copy(error = null, statusMessage = null, forfaitResult = null)
+    }
+
+    fun showError(message: String) {
+        _uiState.value = _uiState.value.copy(error = message)
+    }
+
+    // Telecharge une piece jointe et demande son ouverture (visionneuse image/PDF du systeme).
+    // Miroir de DossierContributeViewModel.viewDocument, adapte : pas de dossierId injecte au
+    // constructeur ici, on lit celui du dossier deja cree (no-op si le dossier n'existe pas encore).
+    fun viewDocument(doc: DocumentSinistre) {
+        val dossierId = _uiState.value.dossier?.id ?: return
+        val documentId = doc.id ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDownloading = true, error = null)
+            val fileName = doc.originalFileName ?: doc.fileName ?: "document-$documentId"
+            repository.downloadDocument(dossierId, documentId, fileName)
+                .onSuccess { uri ->
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        fileToOpen = FileToOpen(uri, doc.contentType ?: "*/*")
+                    )
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        isDownloading = false,
+                        error = "Impossible d'ouvrir le document."
+                    )
+                }
+        }
+    }
+
+    fun deleteDocument(documentId: Long) {
+        val dossierId = _uiState.value.dossier?.id ?: return
+        viewModelScope.launch {
+            repository.deleteDocument(dossierId, documentId)
+                .onSuccess { refreshDocuments(dossierId) }
+                .onFailure { _uiState.value = _uiState.value.copy(error = "Impossible de supprimer le document.") }
+        }
+    }
+
+    // Ouvre une photo pas encore envoyee (fichier local) pour verification avant upload.
+    fun viewPendingPhoto(file: File) {
+        _uiState.value = _uiState.value.copy(
+            fileToOpen = FileToOpen(repository.uriForLocalFile(file), "image/jpeg")
+        )
+    }
+
+    fun fileOpenHandled() {
+        _uiState.value = _uiState.value.copy(fileToOpen = null)
     }
 
     /**

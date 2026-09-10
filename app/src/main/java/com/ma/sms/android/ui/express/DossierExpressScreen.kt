@@ -9,11 +9,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +26,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.repository.DossierRepository
 import com.ma.sms.android.ui.detail.CameraCaptureScreen
+import com.ma.sms.android.ui.detail.CarDiagramCard
+import com.ma.sms.android.ui.detail.ExtraVehiclePhotosCard
+import com.ma.sms.android.ui.detail.OtherDocumentsCard
+import com.ma.sms.android.ui.detail.VEHICLE_ANGLES
+import com.ma.sms.android.ui.detail.allRequiredAnglesDoneForState
+import com.ma.sms.android.ui.detail.angleDocTypeForState
+import com.ma.sms.android.ui.detail.cameraDisplayLabel
+import com.ma.sms.android.ui.detail.extraDocTypesForEtat
+import com.ma.sms.android.ui.detail.extraVehiclePhotoDocTypeForState
+import com.ma.sms.android.ui.detail.isAngleUploadedForState
+import com.ma.sms.android.ui.detail.isExtraVehiclePhotoDocType
 import com.ma.sms.android.util.JwtUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,45 +63,100 @@ fun DossierExpressScreen(
         vm.finished.collect { onFinished() }
     }
 
-    // Camera : un seul type de document a la fois, l'agent rouvre la camera pour chaque piece.
-    var showCameraScreen by remember { mutableStateOf(false) }
-    var pendingDocType by remember { mutableStateOf<String?>(null) }
-    var cameraTitle by remember { mutableStateOf("") }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        if (results[Manifest.permission.CAMERA] == true) {
-            showCameraScreen = true
-        } else {
-            vm.dismissMessages()
+    // Ouvre le fichier telecharge (piece jointe) dans la visionneuse systeme des qu'un
+    // telechargement aboutit — identique a DossierContributeScreen/DossierDetailScreen.
+    LaunchedEffect(state.fileToOpen) {
+        val fileToOpen = state.fileToOpen ?: return@LaunchedEffect
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(fileToOpen.uri, fileToOpen.mimeType)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            vm.showError("Aucune application disponible pour ouvrir ce fichier.")
         }
+        vm.fileOpenHandled()
     }
 
-    fun launchCamera(docType: String, title: String) {
-        pendingDocType = docType
-        cameraTitle = title
+    val etat = state.dossier?.etat
+
+    // File d'attente de captures pour l'ecran camera integre, mecanique identique a
+    // DossierContributeScreen.launchCamera (elle-meme calquee sur DossierDetailScreen) :
+    // enchaine tous les angles vehicule requis manquants dans la meme session, et s'auto-
+    // prolonge pour les photos supplementaires libres.
+    var showCameraScreen by remember { mutableStateOf(false) }
+    var cameraQueue by remember { mutableStateOf<List<String>>(emptyList()) }
+    var cameraQueueIndex by remember { mutableStateOf(0) }
+    var pendingCameraQueue by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    fun openCameraQueue(queue: List<String>) {
+        if (queue.isEmpty()) return
+        cameraQueue = queue
+        cameraQueueIndex = 0
+        showCameraScreen = true
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        if (results[Manifest.permission.CAMERA] == true) openCameraQueue(pendingCameraQueue)
+        else vm.showError("Permission caméra refusée.")
+        // La position est facultative (incrustee sur la photo si disponible) : son refus
+        // ne bloque jamais l'ouverture de la camera.
+    }
+
+    fun launchCamera(docType: String) {
+        // Si l'angle tape fait partie des angles vehicule requis, on enchaine directement sur
+        // tous les angles encore manquants dans la meme session.
+        val tappedAngle = VEHICLE_ANGLES.find { angleDocTypeForState(it, etat) == docType }
+        val queue = if (tappedAngle != null) {
+            val missing = VEHICLE_ANGLES.filter { angle ->
+                angle.required
+                    && !isAngleUploadedForState(angle, etat, state.documents)
+                    && state.pendingPhotos.none { it.docType == angleDocTypeForState(angle, etat) }
+            }
+            (listOf(tappedAngle) + missing.filter { it != tappedAngle })
+                .distinct()
+                .map { angleDocTypeForState(it, etat) }
+        } else {
+            listOf(docType)
+        }
+
+        pendingCameraQueue = queue
         val hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val hasLocationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (hasCameraPermission && hasLocationPermission) {
-            showCameraScreen = true
+            openCameraQueue(queue)
         } else {
             cameraPermissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION))
         }
     }
 
-    if (showCameraScreen && pendingDocType != null) {
+    if (showCameraScreen && cameraQueue.isNotEmpty()) {
         CameraCaptureScreen(
-            title = cameraTitle,
-            subtitle = null,
+            title = cameraDisplayLabel(cameraQueue[cameraQueueIndex], etat),
+            subtitle = if (isExtraVehiclePhotoDocType(cameraQueue[cameraQueueIndex]))
+                "Photo ${cameraQueueIndex + 1} — X pour terminer"
+            else if (cameraQueue.size > 1) "${cameraQueueIndex + 1} / ${cameraQueue.size}" else null,
             onCapture = { file ->
-                vm.addPendingPhoto(file, pendingDocType!!)
-                showCameraScreen = false
+                val docType = cameraQueue[cameraQueueIndex]
+                vm.addPendingPhoto(file, docType)
+                when {
+                    cameraQueueIndex < cameraQueue.lastIndex -> cameraQueueIndex++
+                    isExtraVehiclePhotoDocType(docType) -> {
+                        // Photos supplementaires en nombre libre : on enchaine directement sur
+                        // une nouvelle prise sans demander de confirmation a chaque photo ;
+                        // l'agent ferme l'ecran (bouton X) quand il a termine.
+                        cameraQueue = cameraQueue + "${extraVehiclePhotoDocTypeForState(etat)} ${System.currentTimeMillis()}"
+                        cameraQueueIndex = cameraQueue.lastIndex
+                    }
+                    else -> showCameraScreen = false
+                }
             },
             onClose = { showCameraScreen = false }
         )
         return
     }
-
-    val etat = state.dossier?.etat
 
     Scaffold(
         topBar = {
@@ -120,11 +184,13 @@ fun DossierExpressScreen(
             when {
                 etat == "FORFAIT_ACCEPTE" -> SuccessSection(reference = state.dossier?.reference, onBack = onFinished)
                 etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showForfaitSection -> ForfaitSection(state = state, vm = vm, onBack = vm::backToDocuments)
-                else -> FormAndDocumentsSection(
+                etat == "TRAITEMENT_DOSSIER_EXPRESS" -> PhotosAvantReparationSection(
                     state = state,
                     vm = vm,
-                    onTakePhoto = { docType, title -> launchCamera(docType, title) }
+                    etat = etat,
+                    onTakePhoto = { docType -> launchCamera(docType) }
                 )
+                else -> AssureVehiculeFormSection(state = state, vm = vm)
             }
         }
     }
@@ -209,11 +275,11 @@ private fun ForfaitSection(state: DossierExpressUiState, vm: DossierExpressViewM
     }
 }
 
+// --- Etape A : creation/edition du dossier (assure + vehicule), avant l'affectation terrain ---
 @Composable
-private fun FormAndDocumentsSection(
+private fun AssureVehiculeFormSection(
     state: DossierExpressUiState,
-    vm: DossierExpressViewModel,
-    onTakePhoto: (String, String) -> Unit
+    vm: DossierExpressViewModel
 ) {
     val dossierCreated = state.dossier != null
 
@@ -240,42 +306,6 @@ private fun FormAndDocumentsSection(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionTitle("Documents obligatoires")
-            Spacer(Modifier.height(4.dp))
-
-            DocTypeRow(
-                label = "Photo(s) véhicule",
-                count = documentCount(state, DOC_TYPE_PHOTO_VEHICULE),
-                onTakePhoto = { onTakePhoto(DOC_TYPE_PHOTO_VEHICULE, "Photo véhicule") }
-            )
-            DocTypeRow(
-                label = "Carte grise",
-                count = documentCount(state, DOC_TYPE_CARTE_GRISE),
-                onTakePhoto = { onTakePhoto(DOC_TYPE_CARTE_GRISE, "Carte grise") }
-            )
-            DocTypeRow(
-                label = "Attestation assurance",
-                count = documentCount(state, DOC_TYPE_ATTESTATION_ASSURANCE),
-                onTakePhoto = { onTakePhoto(DOC_TYPE_ATTESTATION_ASSURANCE, "Attestation assurance") }
-            )
-            DocTypeRow(
-                label = "Garantie",
-                count = documentCount(state, DOC_TYPE_GARANTIE),
-                onTakePhoto = { onTakePhoto(DOC_TYPE_GARANTIE, "Garantie") }
-            )
-
-            HorizontalDivider()
-            JustificatifDropdown(state = state, vm = vm)
-            DocTypeRow(
-                label = state.justificatifType,
-                count = documentCount(state, state.justificatifType),
-                onTakePhoto = { onTakePhoto(state.justificatifType, state.justificatifType) }
-            )
-        }
-    }
-
     Button(
         onClick = { vm.saveProgress() },
         enabled = !state.isSaving,
@@ -289,11 +319,70 @@ private fun FormAndDocumentsSection(
             Text(if (dossierCreated) "Enregistrer" else "Créer le dossier")
         }
     }
+}
+
+// --- Etape B : mission terrain "avant reparation", dans l'etat unique TRAITEMENT_DOSSIER_EXPRESS ---
+// Reprend a l'identique les cartes de la vraie mission "avant reparation" de DossierDetailScreen
+// (CarDiagramCard : les 11 angles requis, ExtraVehiclePhotosCard : photos libres, OtherDocumentsCard :
+// carte grise/permis/CIN/attestation/garantie + justificatif), plutot que l'ancienne checklist
+// generique a une seule case "Photo(s) vehicule".
+@Composable
+private fun PhotosAvantReparationSection(
+    state: DossierExpressUiState,
+    vm: DossierExpressViewModel,
+    etat: String?,
+    onTakePhoto: (String) -> Unit
+) {
+    CarDiagramCard(
+        etat = etat,
+        documents = state.documents,
+        pendingPhotos = state.pendingPhotos,
+        onTakePhoto = onTakePhoto,
+        onViewDocument = { vm.viewDocument(it) },
+        onViewPendingPhoto = { vm.viewPendingPhoto(it) }
+    )
+
+    ExtraVehiclePhotosCard(
+        etat = etat,
+        documents = state.documents,
+        pendingPhotos = state.pendingPhotos,
+        onTakePhoto = onTakePhoto,
+        onDeleteDocument = { vm.deleteDocument(it) },
+        onRemovePending = { vm.removePendingPhoto(it) },
+        onViewDocument = { vm.viewDocument(it) },
+        onViewPendingPhoto = { vm.viewPendingPhoto(it) }
+    )
+
+    OtherDocumentsCard(
+        etat = etat,
+        documents = state.documents,
+        pendingPhotos = state.pendingPhotos,
+        docTypes = extraDocTypesForEtat(etat),
+        onTakePhoto = onTakePhoto,
+        onDeleteDocument = { vm.deleteDocument(it) },
+        onRemovePending = { vm.removePendingPhoto(it) },
+        onViewDocument = { vm.viewDocument(it) },
+        onViewPendingPhoto = { vm.viewPendingPhoto(it) }
+    )
+
+    Button(
+        onClick = { vm.saveProgress() },
+        enabled = !state.isSaving,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (state.isSaving) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            Spacer(Modifier.width(8.dp))
+            Text("Enregistrement...")
+        } else {
+            Text("Enregistrer")
+        }
+    }
 
     // Mission terrain et forfait partagent le meme etat TRAITEMENT_DOSSIER_EXPRESS : ce bouton
     // (pas un changement d'etat backend) est ce qui fait passer a la section forfait, une fois
     // les pieces requises reellement televersees (pas seulement en attente d'envoi).
-    if (state.dossier?.etat == "TRAITEMENT_DOSSIER_EXPRESS" && requiredExpressDocumentsUploaded(state)) {
+    if (requiredExpressDocumentsUploaded(state, etat)) {
         Button(
             onClick = { vm.continueToForfait() },
             modifier = Modifier.fillMaxWidth()
@@ -303,46 +392,13 @@ private fun FormAndDocumentsSection(
     }
 }
 
-private fun documentCount(state: DossierExpressUiState, docType: String): Int {
-    val uploaded = state.documents.count { it.type == docType }
-    val pending = state.pendingPhotos.count { it.docType == docType }
-    return uploaded + pending
-}
-
-private fun requiredExpressDocumentsUploaded(state: DossierExpressUiState): Boolean {
+private fun requiredExpressDocumentsUploaded(state: DossierExpressUiState, etat: String?): Boolean {
     fun uploaded(type: String) = state.documents.any { it.type == type }
-    return uploaded(DOC_TYPE_PHOTO_VEHICULE) &&
+    return allRequiredAnglesDoneForState(etat, state.documents) &&
         uploaded(DOC_TYPE_CARTE_GRISE) &&
         uploaded(DOC_TYPE_ATTESTATION_ASSURANCE) &&
         uploaded(DOC_TYPE_GARANTIE) &&
         JUSTIFICATIF_TYPES.any { type -> state.documents.any { it.type == type } }
-}
-
-@Composable
-private fun DocTypeRow(label: String, count: Int, onTakePhoto: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            imageVector = if (count > 0) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = if (count > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text(
-                if (count > 0) "$count fichier(s)" else "Obligatoire",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (count > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-            )
-        }
-        IconButton(onClick = onTakePhoto) {
-            Icon(Icons.Default.CameraAlt, contentDescription = "Prendre photo")
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -377,6 +433,10 @@ private fun AssuranceDropdown(state: DossierExpressUiState, vm: DossierExpressVi
     }
 }
 
+// Non appelee depuis la section photos : OtherDocumentsCard integre desormais son propre
+// selecteur de sous-type de justificatif (JUSTIFICATIF_SUBTYPES, meme role que ce composable).
+// Conservee (avec state.justificatifType/vm.selectJustificatifType inchanges dans le ViewModel)
+// au cas ou un autre point d'entree en aurait besoin.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun JustificatifDropdown(state: DossierExpressUiState, vm: DossierExpressViewModel) {
