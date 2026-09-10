@@ -24,12 +24,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.repository.DossierRepository
 import com.ma.sms.android.ui.detail.CameraCaptureScreen
-import com.ma.sms.android.ui.detail.VEHICLE_ANGLES
-import com.ma.sms.android.ui.detail.VehicleAngle
-import com.ma.sms.android.ui.detail.angleDocTypeForState
-import com.ma.sms.android.ui.detail.extraVehiclePhotoDocTypeForState
 
-private const val FREE_PHOTO_LABEL = "Photo libre"
+// Choix explicite de la phase par l'agent, plutot que deduit de Dossier.etat : la recherche portant
+// desormais sur tous les etats, l'etat formel du dossier ne reflete pas forcement fidelement la
+// situation reelle constatee sur place (ex. reparation deja terminee alors que le dossier n'a pas
+// encore avance). Ces deux valeurs sont les types de document BASE attendus par le backend (sans
+// suffixe d'angle), cf. DossierRepository.uploadPhoto qui les laisse passer tels quels.
+private enum class PhotoPhase(val label: String, val documentType: String) {
+    EN_COURS("Photo en cours de réparation", "PHOTOS EN COURS DE REPARATION"),
+    APRES("Photo après réparation", "PHOTO APRES REPARATION")
+}
 
 /**
  * Ecran de contribution photo, deliberement etroit : consultation en lecture seule du dossier
@@ -51,11 +55,10 @@ fun DossierContributeScreen(
         }
     })
     val state by vm.uiState.collectAsState()
-    val etat = dossier.etat
 
-    // null = "Photo libre" (valeur par defaut). Reste selectionne d'une photo a l'autre : l'agent
-    // n'a pas a re-choisir le type a chaque prise, seulement a le changer s'il le souhaite.
-    var selectedAngle by remember { mutableStateOf<VehicleAngle?>(null) }
+    // Reste selectionne d'une photo a l'autre : l'agent n'a pas a re-choisir la phase a chaque
+    // prise, seulement a la changer s'il passe de "en cours" a "apres" pendant la meme visite.
+    var selectedPhase by remember { mutableStateOf(PhotoPhase.EN_COURS) }
     var showCameraScreen by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -75,14 +78,11 @@ fun DossierContributeScreen(
     }
 
     if (showCameraScreen) {
-        val label = selectedAngle?.label ?: FREE_PHOTO_LABEL
         CameraCaptureScreen(
             title = "Photo supplémentaire",
-            subtitle = "${dossier.reference ?: ""} — $label",
+            subtitle = "${dossier.reference ?: ""} — ${selectedPhase.label}",
             onCapture = { file ->
-                val docType = selectedAngle?.let { angleDocTypeForState(it, etat) }
-                    ?: extraVehiclePhotoDocTypeForState(etat)
-                vm.uploadPhoto(file, docType, label)
+                vm.uploadPhoto(file, selectedPhase.documentType, selectedPhase.label)
                 showCameraScreen = false
             },
             onClose = { showCameraScreen = false }
@@ -133,7 +133,7 @@ fun DossierContributeScreen(
                             contentColor = MaterialTheme.colorScheme.secondary
                         ) {
                             Text(
-                                contributableStateLabel(etat),
+                                contributableStateLabel(dossier.etat),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -154,7 +154,7 @@ fun DossierContributeScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Ajouter une photo", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    PhotoTypeDropdown(selected = selectedAngle, onSelect = { selectedAngle = it })
+                    PhotoTypeDropdown(selected = selectedPhase, onSelect = { selectedPhase = it })
                     Button(
                         onClick = { launchCamera() },
                         enabled = !state.isUploading,
@@ -172,19 +172,18 @@ fun DossierContributeScreen(
                     }
                 }
             }
-
-            Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text("Terminé")
-            }
         }
     }
 }
 
+// Pas de bouton "Terminé"/fin de mission sur cet ecran, volontairement : seule la fleche retour
+// de la barre du haut permet de quitter, pour eviter toute confusion avec l'action "Fin de
+// mission" qui fait avancer l'etat du dossier ailleurs dans l'app (celle-ci ne fait rien de tel).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PhotoTypeDropdown(selected: VehicleAngle?, onSelect: (VehicleAngle?) -> Unit) {
+private fun PhotoTypeDropdown(selected: PhotoPhase, onSelect: (PhotoPhase) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val label = selected?.label ?: FREE_PHOTO_LABEL
+    val label = selected.label
 
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
@@ -196,9 +195,8 @@ private fun PhotoTypeDropdown(selected: VehicleAngle?, onSelect: (VehicleAngle?)
             modifier = Modifier.fillMaxWidth().menuAnchor()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text(FREE_PHOTO_LABEL) }, onClick = { onSelect(null); expanded = false })
-            VEHICLE_ANGLES.forEach { angle ->
-                DropdownMenuItem(text = { Text(angle.label) }, onClick = { onSelect(angle); expanded = false })
+            PhotoPhase.values().forEach { phase ->
+                DropdownMenuItem(text = { Text(phase.label) }, onClick = { onSelect(phase); expanded = false })
             }
         }
     }
