@@ -22,6 +22,13 @@ class DossierRepository(private val api: ApiService, private val context: Contex
         api.getDossiers()
     }
 
+    /** Recherche tous les dossiers de l'antenne de l'agent (pas seulement les siens), en lecture seule. */
+    suspend fun searchAllDossiersInAntenne(): Result<List<Dossier>> = runCatching {
+        api.getDossiersWithScope("all_readonly")
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
     suspend fun getDossier(id: Long): Result<Dossier> = runCatching {
         api.getDossier(id)
     }

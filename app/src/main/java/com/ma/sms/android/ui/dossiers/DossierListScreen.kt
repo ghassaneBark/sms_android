@@ -29,6 +29,7 @@ fun DossierListScreen(
     repository: DossierRepository,
     onDossierClick: (Long) -> Unit,
     onNewDossierExpress: () -> Unit = {},
+    onSearchDossiers: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     val vm: DossierListViewModel = viewModel(factory = object : ViewModelProvider.Factory {
@@ -77,6 +78,9 @@ fun DossierListScreen(
                 actions = {
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
+                    }
+                    IconButton(onClick = onSearchDossiers) {
+                        Icon(Icons.Default.Search, contentDescription = "Rechercher un dossier")
                     }
                     IconButton(onClick = { showLogoutDialog = true }) {
                         Icon(Icons.Default.Logout, contentDescription = "Déconnexion")

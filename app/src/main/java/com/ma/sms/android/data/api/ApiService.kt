@@ -19,6 +19,9 @@ interface ApiService {
     @GET("api/dossier")
     suspend fun getDossiers(): List<Dossier>
 
+    @GET("api/dossier")
+    suspend fun getDossiersWithScope(@Query("scope") scope: String): List<Dossier>
+
     @GET("api/dossier/{id}")
     suspend fun getDossier(@Path("id") id: Long): Dossier
 
