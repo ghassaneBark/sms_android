@@ -220,7 +220,8 @@ private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
 }
 
 // Libelle court affiche sur l'ecran de capture pour un docType donne
-private fun cameraDisplayLabel(docType: String, etat: String?): String {
+// Publique (pas private) : reutilisee par ui/search/DossierContributeScreen.kt.
+fun cameraDisplayLabel(docType: String, etat: String?): String {
     VEHICLE_ANGLES.forEach { angle ->
         if (angleDocTypeForState(angle, etat) == docType) return angle.label
     }
@@ -710,8 +711,10 @@ private fun VehiclePhotosCard(
 }
 
 // --- Card photos supplémentaires véhicule ---
+// Publique (pas private) : reutilisee telle quelle par l'ecran de contribution photo
+// (ui/search/DossierContributeScreen.kt) pour un agent non assigne au dossier.
 @Composable
-private fun ExtraVehiclePhotosCard(
+fun ExtraVehiclePhotosCard(
     etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,
