@@ -9,9 +9,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 
-// Etats agent terrain pour lesquels un agent non assigne peut consulter et contribuer des photos
-// (cf. contexte : dossier "en cours de reparation" ou "apres reparation" repere par un autre agent).
-val CONTRIBUTABLE_STATES = setOf("ATTENTE_EXPERTISE_SR", "ATTENTE_PHOTO_FIN_REPARATION")
+// Etats a exclure de la recherche (aucun pour l'instant : tous les etats sont cherchables). A
+// completer plus tard avec les etats ou la contribution photo n'a pas de sens (ex. dossier deja
+// clos), sur demande explicite.
+val EXCLUDED_STATES = emptySet<String>()
 
 fun contributableStateLabel(etat: String?): String = when (etat) {
     "ATTENTE_EXPERTISE_SR" -> "En cours de réparation"
@@ -19,10 +20,12 @@ fun contributableStateLabel(etat: String?): String = when (etat) {
     else -> etat ?: "-"
 }
 
-/** Filtre client-side (immatriculation ou reference) sur une liste deja restreinte aux etats eligibles. */
+// Filtre client-side (immatriculation ou reference) : ne renvoie rien tant que l'agent n'a pas
+// commence a taper, pour eviter d'afficher d'emblee tous les dossiers de l'antenne (liste
+// potentiellement longue et sans interet avant qu'il precise ce qu'il cherche).
 fun filterDossiers(dossiers: List<Dossier>, query: String): List<Dossier> {
     val q = query.trim()
-    if (q.isBlank()) return dossiers
+    if (q.isBlank()) return emptyList()
     return dossiers.filter { dossier ->
         dossier.reference?.contains(q, ignoreCase = true) == true ||
             dossier.vehiculeAssure?.immatriculation?.contains(q, ignoreCase = true) == true
@@ -51,7 +54,7 @@ class DossierSearchViewModel(private val repository: DossierRepository) : ViewMo
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             repository.searchAllDossiersInAntenne()
                 .onSuccess { dossiers ->
-                    val eligible = dossiers.filter { it.etat in CONTRIBUTABLE_STATES }
+                    val eligible = dossiers.filter { it.etat !in EXCLUDED_STATES }
                     _uiState.value = _uiState.value.copy(eligibleDossiers = eligible, isLoading = false)
                 }
                 .onFailure { throwable ->

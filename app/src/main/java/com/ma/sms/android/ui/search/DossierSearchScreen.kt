@@ -56,7 +56,7 @@ fun DossierSearchScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                "Recherche parmi les dossiers de votre antenne en cours de réparation ou après réparation.",
+                "Recherche parmi tous les dossiers de votre antenne, pas seulement les vôtres.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -81,15 +81,26 @@ fun DossierSearchScreen(
                         }
                     }
                 }
+                state.query.isBlank() -> {
+                    // Rien tant que l'agent n'a pas commence a taper (pas de liste complete
+                    // affichee d'emblee) : simple invite, pas un etat "aucun resultat".
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "Tapez une immatriculation ou une référence pour rechercher.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
                 results.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Default.SearchOff, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                if (state.query.isBlank())
-                                    "Aucun dossier en cours de réparation ou après réparation dans votre antenne."
-                                else
-                                    "Aucun dossier ne correspond à votre recherche.",
+                                "Aucun dossier ne correspond à votre recherche.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodyMedium
                             )
