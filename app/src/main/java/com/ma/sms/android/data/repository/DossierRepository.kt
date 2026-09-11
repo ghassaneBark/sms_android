@@ -11,6 +11,7 @@ import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -147,6 +148,13 @@ class DossierRepository(private val api: ApiService, private val context: Contex
 
     suspend fun reassignAgentTerrain(dossierId: Long, newAgentTerrainUserId: String): Result<Dossier> = runCatching {
         api.reassignAgentTerrain(dossierId, ReassignAgentTerrainRequest(newAgentTerrainUserId))
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    /** Extrait les champs vehicule depuis la carte grise deja televersee sur le dossier (IA vision). */
+    suspend fun extractVehiculeFromCarteGrise(dossierId: Long): Result<VehiculeExtraction> = runCatching {
+        api.extractVehiculeFromCarteGrise(dossierId)
     }.recoverCatching { throwable ->
         throw extractBusinessMessageOrRethrow(throwable)
     }

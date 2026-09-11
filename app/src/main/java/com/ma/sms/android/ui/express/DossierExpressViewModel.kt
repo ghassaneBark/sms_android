@@ -93,7 +93,10 @@ data class DossierExpressUiState(
     // Bascule locale (pas derivee de l'etat backend) : permet a l'agent de revenir editer
     // assure/vehicule a tout moment avant "Fin de mission", meme une fois le dossier passe
     // en TRAITEMENT_DOSSIER_EXPRESS (voir PhotosAvantReparationSection / AssureVehiculeFormSection).
-    val showAssureVehiculeForm: Boolean = false
+    val showAssureVehiculeForm: Boolean = false,
+
+    // Extraction IA (vision) des champs vehicule depuis la carte grise deja televersee.
+    val isExtractingVehicule: Boolean = false
 )
 
 class DossierExpressViewModel(
@@ -174,6 +177,36 @@ class DossierExpressViewModel(
         current.getOrNull(index)?.file?.delete()
         current.removeAt(index)
         _uiState.value = _uiState.value.copy(pendingPhotos = current)
+    }
+
+    /**
+     * "Extraire depuis la carte grise" : lit la carte grise deja televersee sur le dossier via
+     * l'IA (vision) et pre-remplit les champs vehicule encore vides du formulaire. Ne remplace
+     * jamais un champ deja saisi par l'agent (pre-remplissage non destructif, cf. web).
+     */
+    fun extractFromCarteGrise() {
+        val dossierId = _uiState.value.dossier?.id ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isExtractingVehicule = true, error = null, statusMessage = null)
+            repository.extractVehiculeFromCarteGrise(dossierId)
+                .onSuccess { extraction ->
+                    val current = _uiState.value
+                    _uiState.value = current.copy(
+                        isExtractingVehicule = false,
+                        immatriculation = current.immatriculation.ifBlank { extraction.immatriculation.orEmpty() },
+                        marque = current.marque.ifBlank { extraction.marque.orEmpty() },
+                        modele = current.modele.ifBlank { extraction.modele.orEmpty() },
+                        numeroChassis = current.numeroChassis.ifBlank { extraction.numeroChassis.orEmpty() },
+                        statusMessage = "Champs véhicule pré-remplis depuis la carte grise. Vérifiez avant d'enregistrer."
+                    )
+                }
+                .onFailure { throwable ->
+                    _uiState.value = _uiState.value.copy(
+                        isExtractingVehicule = false,
+                        error = throwable.message?.takeIf { it.isNotBlank() } ?: "Impossible d'extraire les informations de la carte grise."
+                    )
+                }
+        }
     }
 
     fun dismissMessages() {
@@ -387,6 +420,7 @@ class DossierExpressViewModel(
 
     private fun buildCreateRequest(state: DossierExpressUiState): DossierExpressCreateRequest {
         return DossierExpressCreateRequest(
+            reference = generateReference(),
             assure = buildAssureFromState(state),
             assurance = Assurance(id = state.selectedAssuranceId ?: 0L, nom = null),
             vehiculeAssure = buildVehiculeFromState(state),
@@ -394,6 +428,16 @@ class DossierExpressViewModel(
             agentTerrainUserErId = null,
             express = true
         )
+    }
+
+    /** Meme format que le web (dossier-form.component.ts, generateReference()) : DOS-YYYYMMDD-RRRR. */
+    private fun generateReference(): String {
+        val now = java.util.Calendar.getInstance()
+        val year = now.get(java.util.Calendar.YEAR)
+        val month = (now.get(java.util.Calendar.MONTH) + 1).toString().padStart(2, '0')
+        val day = now.get(java.util.Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
+        val random = (0 until 10000).random().toString().padStart(4, '0')
+        return "DOS-$year$month$day-$random"
     }
 
     /**

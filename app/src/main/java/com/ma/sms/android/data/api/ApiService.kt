@@ -9,6 +9,7 @@ import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PageResponse
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -66,6 +67,9 @@ interface ApiService {
         @Path("id") id: Long,
         @Body body: ReassignAgentTerrainRequest
     ): Dossier
+
+    @POST("api/dossier/{id}/ai/extract-vehicule")
+    suspend fun extractVehiculeFromCarteGrise(@Path("id") id: Long): VehiculeExtraction
 
     @GET("api/dossier/{id}/devis")
     suspend fun getDevisByDossier(@Path("id") id: Long): List<Devis>

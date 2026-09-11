@@ -85,6 +85,7 @@ data class AccordForfait(
 
 /** Corps de la requete de creation d'un dossier depuis le terrain ("Dossier Express"). */
 data class DossierExpressCreateRequest(
+    val reference: String,
     val assure: Assure,
     val assurance: Assurance,
     val vehiculeAssure: Vehicule?,
@@ -104,4 +105,17 @@ data class DocumentSinistre(
 
 data class AdvanceStateRequest(
     @SerializedName("dummy") val dummy: String? = null
+)
+
+/** Resultat de l'extraction IA (vision) depuis la carte grise deja televersee sur le dossier. */
+data class VehiculeExtraction(
+    val marque: String? = null,
+    val modele: String? = null,
+    val dateMec: String? = null,
+    val immatriculation: String? = null,
+    val matriculeWw: String? = null,
+    val numeroChassis: String? = null,
+    val adresse: String? = null,
+    val puissanceFiscale: Int? = null,
+    val combustion: String? = null
 )

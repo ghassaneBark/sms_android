@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -318,6 +319,30 @@ private fun AssureVehiculeFormSection(
             OutlinedTextField(value = state.marque, onValueChange = vm::updateMarque, label = { Text("Marque") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = state.modele, onValueChange = vm::updateModele, label = { Text("Modèle") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = state.numeroChassis, onValueChange = vm::updateNumeroChassis, label = { Text("N° châssis") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+            val hasCarteGrise = hasCarteGriseDocument(state)
+            OutlinedButton(
+                onClick = { vm.extractFromCarteGrise() },
+                enabled = dossierCreated && hasCarteGrise && !state.isExtractingVehicule,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (state.isExtractingVehicule) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Extraction...")
+                } else {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Extraire depuis la carte grise")
+                }
+            }
+            if (dossierCreated && !hasCarteGrise) {
+                Text(
+                    "Ajoutez d'abord la carte grise dans la section photos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 
@@ -415,6 +440,10 @@ private fun PhotosAvantReparationSection(
         }
     }
 }
+
+/** Mirroir du gate web "hasCarteGriseDocument" : le bouton d'extraction IA ne doit jamais etre cliquable avant. */
+private fun hasCarteGriseDocument(state: DossierExpressUiState): Boolean =
+    state.documents.any { it.type == "Carte grise" || it.type == "Carte grise recto verso" }
 
 private fun requiredExpressDocumentsUploaded(state: DossierExpressUiState, etat: String?): Boolean {
     fun uploaded(type: String) = state.documents.any { it.type == type }
