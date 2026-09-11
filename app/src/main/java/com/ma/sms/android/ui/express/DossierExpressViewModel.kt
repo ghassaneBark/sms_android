@@ -95,6 +95,12 @@ data class DossierExpressUiState(
     // en TRAITEMENT_DOSSIER_EXPRESS (voir PhotosAvantReparationSection / AssureVehiculeFormSection).
     val showAssureVehiculeForm: Boolean = false,
 
+    // Bascule locale : avant meme la creation du dossier, l'agent commence par prendre des photos
+    // (dont la carte grise) en local (pendingPhotos), sans avoir rien saisi. Une fois qu'il clique
+    // "Continuer", on passe au formulaire assure/vehicule (qui cree le dossier et televerse ces
+    // photos en attente d'un coup), pour que l'extraction IA carte grise soit deja disponible.
+    val hasCompletedInitialPhotos: Boolean = false,
+
     // Extraction IA (vision) des champs vehicule depuis la carte grise deja televersee.
     val isExtractingVehicule: Boolean = false,
 
@@ -215,6 +221,8 @@ class DossierExpressViewModel(
     fun backToDocuments() { _uiState.value = _uiState.value.copy(showForfaitSection = false) }
     fun editAssureVehicule() { _uiState.value = _uiState.value.copy(showAssureVehiculeForm = true) }
     fun backToPhotosFromForm() { _uiState.value = _uiState.value.copy(showAssureVehiculeForm = false) }
+    fun continueFromInitialPhotos() { _uiState.value = _uiState.value.copy(hasCompletedInitialPhotos = true) }
+    fun backToInitialPhotos() { _uiState.value = _uiState.value.copy(hasCompletedInitialPhotos = false) }
 
     fun addPendingPhoto(file: File, docType: String) {
         val current = _uiState.value.pendingPhotos.toMutableList()
@@ -344,7 +352,12 @@ class DossierExpressViewModel(
                 }
                 if (created.isFailure) return@launch
                 current = created.getOrNull()
-                _uiState.value = _uiState.value.copy(dossier = current)
+                // Reste sur la page informations (au lieu de retomber sur les photos des que
+                // TRAITEMENT_DOSSIER_EXPRESS est atteint) : l'agent vient de creer le dossier
+                // depuis ce formulaire, ses photos en attente viennent d'etre listees pour
+                // upload ci-dessous - il doit pouvoir enchainer avec l'extraction carte grise
+                // sans etre renvoye ailleurs.
+                _uiState.value = _uiState.value.copy(dossier = current, showAssureVehiculeForm = true)
             } else {
                 // Dossier deja cree : l'agent peut revenir editer assure/vehicule/intermediaire a
                 // tout moment avant "Fin de mission" (voir showAssureVehiculeForm) ; il faut donc

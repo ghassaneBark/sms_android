@@ -199,6 +199,17 @@ fun DossierExpressScreen(
                     onTakePhoto = { docType -> launchCamera(docType) },
                     onEditAssureVehicule = vm::editAssureVehicule
                 )
+                // Avant meme la creation du dossier : l'agent commence par les photos (dont la
+                // carte grise), en local (pendingPhotos), sans rien avoir saisi. "Continuer" bascule
+                // ensuite vers le formulaire assure/vehicule, qui cree le dossier et televerse ces
+                // photos d'un coup — l'extraction IA carte grise est alors deja utilisable.
+                state.dossier == null && !state.hasCompletedInitialPhotos -> InitialPhotosSection(
+                    state = state,
+                    vm = vm,
+                    onTakePhoto = { docType -> launchCamera(docType) },
+                    onContinue = vm::continueFromInitialPhotos
+                )
+                state.dossier == null -> AssureVehiculeFormSection(state = state, vm = vm, onBack = vm::backToInitialPhotos)
                 else -> AssureVehiculeFormSection(state = state, vm = vm)
             }
         }
@@ -316,42 +327,39 @@ private fun AssureVehiculeFormSection(
         }
     }
 
-    // Vehicule assure : uniquement une fois le dossier cree (donc apres les photos, dans le flux
-    // normal — voir le "when" de DossierExpressScreen). Report volontaire : l'agent commence par
-    // les photos (dont la carte grise), puis remplit ces champs ici en profitant de l'extraction
-    // IA plutot que de les saisir a l'aveugle avant meme d'avoir vu le vehicule/la carte grise.
-    if (dossierCreated) {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionTitle("Véhicule assuré")
-                OutlinedTextField(value = state.immatriculation, onValueChange = vm::updateImmatriculation, label = { Text("Immatriculation") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = state.marque, onValueChange = vm::updateMarque, label = { Text("Marque") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = state.modele, onValueChange = vm::updateModele, label = { Text("Modèle") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = state.numeroChassis, onValueChange = vm::updateNumeroChassis, label = { Text("N° châssis") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    // Vehicule assure : toujours affiche ici (cette page n'est atteinte qu'apres l'etape photos
+    // initiale, cf. le "when" de DossierExpressScreen), donc la carte grise est deja televersee
+    // des la creation du dossier et l'extraction IA est immediatement utilisable.
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionTitle("Véhicule assuré")
+            OutlinedTextField(value = state.immatriculation, onValueChange = vm::updateImmatriculation, label = { Text("Immatriculation") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = state.marque, onValueChange = vm::updateMarque, label = { Text("Marque") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = state.modele, onValueChange = vm::updateModele, label = { Text("Modèle") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = state.numeroChassis, onValueChange = vm::updateNumeroChassis, label = { Text("N° châssis") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                val hasCarteGrise = hasCarteGriseDocument(state)
-                OutlinedButton(
-                    onClick = { vm.extractFromCarteGrise() },
-                    enabled = hasCarteGrise && !state.isExtractingVehicule,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (state.isExtractingVehicule) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Extraction...")
-                    } else {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Extraire depuis la carte grise")
-                    }
+            val hasCarteGrise = hasCarteGriseDocument(state)
+            OutlinedButton(
+                onClick = { vm.extractFromCarteGrise() },
+                enabled = dossierCreated && hasCarteGrise && !state.isExtractingVehicule,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (state.isExtractingVehicule) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Extraction...")
+                } else {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Extraire depuis la carte grise")
                 }
-                if (!hasCarteGrise) {
-                    Text(
-                        "Ajoutez d'abord la carte grise dans la section photos.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            }
+            if (dossierCreated && !hasCarteGrise) {
+                Text(
+                    "La carte grise n'a pas été détectée parmi les photos prises.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -448,6 +456,61 @@ private fun PhotosAvantReparationSection(
         ) {
             Text("Continuer vers le forfait")
         }
+    }
+}
+
+// --- Etape 0 : photos prises avant meme la creation du dossier (100% locales, PendingPhoto
+// uniquement — aucun appel reseau ici, ni upload ni creation). Memes cartes que
+// PhotosAvantReparationSection, mais sans "Enregistrer"/"Continuer vers le forfait" (pas encore
+// de dossier a sauvegarder) : juste "Continuer", une bascule locale vers le formulaire
+// assure/vehicule qui creera le dossier et televersera ces photos en attente d'un coup.
+@Composable
+private fun InitialPhotosSection(
+    state: DossierExpressUiState,
+    vm: DossierExpressViewModel,
+    onTakePhoto: (String) -> Unit,
+    onContinue: () -> Unit
+) {
+    Text(
+        "Prenez les photos du véhicule (dont la carte grise) avant de saisir les informations.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    CarDiagramCard(
+        etat = null,
+        documents = emptyList(),
+        pendingPhotos = state.pendingPhotos,
+        onTakePhoto = onTakePhoto,
+        onViewPendingPhoto = { vm.viewPendingPhoto(it) }
+    )
+
+    ExtraVehiclePhotosCard(
+        etat = null,
+        documents = emptyList(),
+        pendingPhotos = state.pendingPhotos,
+        onTakePhoto = onTakePhoto,
+        onDeleteDocument = {},
+        onRemovePending = { vm.removePendingPhoto(it) },
+        onViewPendingPhoto = { vm.viewPendingPhoto(it) }
+    )
+
+    OtherDocumentsCard(
+        etat = null,
+        documents = emptyList(),
+        pendingPhotos = state.pendingPhotos,
+        docTypes = extraDocTypesForEtat(null),
+        onTakePhoto = onTakePhoto,
+        onDeleteDocument = {},
+        onRemovePending = { vm.removePendingPhoto(it) },
+        onViewDocument = {}
+    )
+
+    Button(
+        onClick = onContinue,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("Continuer")
     }
 }
 
