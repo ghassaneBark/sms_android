@@ -316,36 +316,42 @@ private fun AssureVehiculeFormSection(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionTitle("Véhicule assuré")
-            OutlinedTextField(value = state.immatriculation, onValueChange = vm::updateImmatriculation, label = { Text("Immatriculation") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = state.marque, onValueChange = vm::updateMarque, label = { Text("Marque") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = state.modele, onValueChange = vm::updateModele, label = { Text("Modèle") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = state.numeroChassis, onValueChange = vm::updateNumeroChassis, label = { Text("N° châssis") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    // Vehicule assure : uniquement une fois le dossier cree (donc apres les photos, dans le flux
+    // normal — voir le "when" de DossierExpressScreen). Report volontaire : l'agent commence par
+    // les photos (dont la carte grise), puis remplit ces champs ici en profitant de l'extraction
+    // IA plutot que de les saisir a l'aveugle avant meme d'avoir vu le vehicule/la carte grise.
+    if (dossierCreated) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionTitle("Véhicule assuré")
+                OutlinedTextField(value = state.immatriculation, onValueChange = vm::updateImmatriculation, label = { Text("Immatriculation") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = state.marque, onValueChange = vm::updateMarque, label = { Text("Marque") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = state.modele, onValueChange = vm::updateModele, label = { Text("Modèle") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = state.numeroChassis, onValueChange = vm::updateNumeroChassis, label = { Text("N° châssis") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-            val hasCarteGrise = hasCarteGriseDocument(state)
-            OutlinedButton(
-                onClick = { vm.extractFromCarteGrise() },
-                enabled = dossierCreated && hasCarteGrise && !state.isExtractingVehicule,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (state.isExtractingVehicule) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Extraction...")
-                } else {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Extraire depuis la carte grise")
+                val hasCarteGrise = hasCarteGriseDocument(state)
+                OutlinedButton(
+                    onClick = { vm.extractFromCarteGrise() },
+                    enabled = hasCarteGrise && !state.isExtractingVehicule,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (state.isExtractingVehicule) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Extraction...")
+                    } else {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Extraire depuis la carte grise")
+                    }
                 }
-            }
-            if (dossierCreated && !hasCarteGrise) {
-                Text(
-                    "Ajoutez d'abord la carte grise dans la section photos.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (!hasCarteGrise) {
+                    Text(
+                        "Ajoutez d'abord la carte grise dans la section photos.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
