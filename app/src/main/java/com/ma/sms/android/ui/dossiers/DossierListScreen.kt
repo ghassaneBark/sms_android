@@ -27,7 +27,7 @@ import com.ma.sms.android.data.repository.DossierRepository
 @Composable
 fun DossierListScreen(
     repository: DossierRepository,
-    onDossierClick: (Long) -> Unit,
+    onDossierClick: (Dossier) -> Unit,
     onNewDossierExpress: () -> Unit = {},
     onSearchDossiers: () -> Unit = {},
     onLogout: () -> Unit
@@ -125,7 +125,7 @@ fun DossierListScreen(
                 else -> {
                     LazyColumn(state = listState, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(state.dossiers, key = { it.id }) { dossier ->
-                            DossierCard(dossier = dossier, onClick = { onDossierClick(dossier.id) })
+                            DossierCard(dossier = dossier, onClick = { onDossierClick(dossier) })
                         }
                     }
                 }

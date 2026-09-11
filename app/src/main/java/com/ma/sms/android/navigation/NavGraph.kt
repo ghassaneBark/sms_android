@@ -30,6 +30,9 @@ sealed class Screen(val route: String) {
         fun buildRoute(id: Long) = "dossiers/$id"
     }
     object DossierExpress : Screen("dossiers/express")
+    object DossierExpressResume : Screen("dossiers/express/{id}") {
+        fun buildRoute(id: Long) = "dossiers/express/$id"
+    }
     object DossierSearchFlow : Screen("dossiers/search/flow")
     object DossierSearch : Screen("dossiers/search")
     object DossierContribute : Screen("dossiers/search/{id}") {
@@ -56,8 +59,15 @@ fun NavGraph(navController: NavHostController, app: SmsApplication) {
         composable(Screen.DossierList.route) {
             DossierListScreen(
                 repository = app.dossierRepository,
-                onDossierClick = { id ->
-                    navController.navigate(Screen.DossierDetail.buildRoute(id))
+                onDossierClick = { dossier ->
+                    // Un dossier Express en cours (TRAITEMENT_DOSSIER_EXPRESS) n'a pas d'ecran de
+                    // detail generique : photos/forfait/edition assure-vehicule ne vivent que dans
+                    // l'assistant DossierExpressScreen, donc on y revient au lieu du detail normal.
+                    if (dossier.etat == "TRAITEMENT_DOSSIER_EXPRESS") {
+                        navController.navigate(Screen.DossierExpressResume.buildRoute(dossier.id))
+                    } else {
+                        navController.navigate(Screen.DossierDetail.buildRoute(dossier.id))
+                    }
                 },
                 onNewDossierExpress = {
                     navController.navigate(Screen.DossierExpress.route)
@@ -89,6 +99,19 @@ fun NavGraph(navController: NavHostController, app: SmsApplication) {
         composable(Screen.DossierExpress.route) {
             DossierExpressScreen(
                 repository = app.dossierRepository,
+                onBack = { navController.popBackStack() },
+                onFinished = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.DossierExpressResume.route,
+            arguments = listOf(navArgument("id") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getLong("id") ?: return@composable
+            DossierExpressScreen(
+                repository = app.dossierRepository,
+                existingDossierId = id,
                 onBack = { navController.popBackStack() },
                 onFinished = { navController.popBackStack() }
             )

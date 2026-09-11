@@ -46,7 +46,8 @@ import com.ma.sms.android.util.JwtUtils
 fun DossierExpressScreen(
     repository: DossierRepository,
     onBack: () -> Unit,
-    onFinished: () -> Unit
+    onFinished: () -> Unit,
+    existingDossierId: Long? = null
 ) {
     val context = LocalContext.current
     val agentTerrainUserId = remember {
@@ -56,7 +57,7 @@ fun DossierExpressScreen(
     val vm: DossierExpressViewModel = viewModel(factory = object : ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             @Suppress("UNCHECKED_CAST")
-            return DossierExpressViewModel(repository, agentTerrainUserId) as T
+            return DossierExpressViewModel(repository, agentTerrainUserId, existingDossierId) as T
         }
     })
     val state by vm.uiState.collectAsState()
@@ -184,6 +185,9 @@ fun DossierExpressScreen(
             state.forfaitResult?.let { InfoBanner(it) { vm.dismissMessages() } }
 
             when {
+                state.isLoadingExisting -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
                 etat == "FORFAIT_ACCEPTE" -> SuccessSection(reference = state.dossier?.reference, onBack = onFinished)
                 etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showForfaitSection -> ForfaitSection(state = state, vm = vm, onBack = vm::backToDocuments)
                 etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showAssureVehiculeForm ->

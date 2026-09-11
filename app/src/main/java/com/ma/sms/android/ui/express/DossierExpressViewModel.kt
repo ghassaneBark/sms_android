@@ -96,12 +96,19 @@ data class DossierExpressUiState(
     val showAssureVehiculeForm: Boolean = false,
 
     // Extraction IA (vision) des champs vehicule depuis la carte grise deja televersee.
-    val isExtractingVehicule: Boolean = false
+    val isExtractingVehicule: Boolean = false,
+
+    // Chargement d'un dossier Express deja cree (repris depuis la liste des dossiers, cf.
+    // existingDossierId) : tant que c'est en cours, on n'affiche ni le formulaire de creation
+    // vide ni les photos, pour eviter un flash incoherent avant que dossier/documents/champs
+    // ne soient effectivement charges.
+    val isLoadingExisting: Boolean = false
 )
 
 class DossierExpressViewModel(
     private val repository: DossierRepository,
-    private val agentTerrainUserId: String?
+    private val agentTerrainUserId: String?,
+    private val existingDossierId: Long? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DossierExpressUiState())
@@ -113,6 +120,49 @@ class DossierExpressViewModel(
     init {
         loadAssurances()
         loadIntermediaires()
+        if (existingDossierId != null) {
+            loadExistingDossier(existingDossierId)
+        }
+    }
+
+    /**
+     * Reprend un dossier Express deja cree (ex: l'agent a quitte l'app puis rouvert le dossier
+     * depuis la liste) : recharge le dossier + ses documents et repeuple tous les champs du
+     * formulaire assure/vehicule depuis les donnees deja enregistrees, pour que "Modifier
+     * assure / vehicule" et la section photos redeviennent accessibles comme avant.
+     */
+    private fun loadExistingDossier(dossierId: Long) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingExisting = true, error = null)
+            val dossierResult = repository.getDossier(dossierId)
+            val dossier = dossierResult.getOrNull()
+            if (dossier == null) {
+                _uiState.value = _uiState.value.copy(
+                    isLoadingExisting = false,
+                    error = dossierResult.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                        ?: "Impossible de charger le dossier."
+                )
+                return@launch
+            }
+            val documents = repository.getDocuments(dossierId).getOrDefault(emptyList())
+            val assure = dossier.assure
+            val vehicule = dossier.vehiculeAssure
+            _uiState.value = _uiState.value.copy(
+                isLoadingExisting = false,
+                dossier = dossier,
+                documents = documents,
+                nom = assure?.nom.orEmpty(),
+                prenom = assure?.prenom.orEmpty(),
+                telephone = assure?.telephone.orEmpty(),
+                email = assure?.email.orEmpty(),
+                intermediaire = assure?.intermediaire.orEmpty(),
+                selectedAssuranceId = dossier.assurance?.id,
+                immatriculation = vehicule?.immatriculation.orEmpty(),
+                marque = vehicule?.marque.orEmpty(),
+                modele = vehicule?.modele.orEmpty(),
+                numeroChassis = vehicule?.numeroChassis.orEmpty()
+            )
+        }
     }
 
     fun loadAssurances() {
@@ -326,13 +376,28 @@ class DossierExpressViewModel(
             val uploadFailures = uploadPendingPhotos(dossierId)
             refreshDocuments(dossierId)
 
-            val advanceMessage = advanceStateAsFarAsPossible(dossierId)
+            // Une fois TRAITEMENT_DOSSIER_EXPRESS atteint, "Enregistrer" ne sert qu'a sauvegarder
+            // les photos/modifications en cours : on ne retente plus d'avancer l'etat a chaque
+            // clic (ca echouait systematiquement avec "Pieces manquantes..." tant que le dossier
+            // n'est pas complet, ce qui ressemblait a tort a une erreur alors que l'enregistrement
+            // avait bien reussi). Le passage au forfait se fait desormais uniquement via le bouton
+            // dedie "Continuer vers le forfait" (deja gate sur les pieces completes cote client).
+            val etatAfterSave = _uiState.value.dossier?.etat
+            val advanceMessage = if (etatAfterSave == "TRAITEMENT_DOSSIER_EXPRESS") {
+                null
+            } else {
+                advanceStateAsFarAsPossible(dossierId)
+            }
 
             val summary = buildString {
                 append("Dossier enregistré (réf. ${_uiState.value.dossier?.reference ?: dossierId})")
                 if (uploadFailures > 0) append(" — $uploadFailures photo(s) non envoyée(s)")
-                append(". ")
-                append(advanceMessage)
+                if (advanceMessage != null) {
+                    append(". ")
+                    append(advanceMessage)
+                } else {
+                    append(".")
+                }
             }
             _uiState.value = _uiState.value.copy(isSaving = false, statusMessage = summary)
         }
