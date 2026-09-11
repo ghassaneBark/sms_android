@@ -8,6 +8,7 @@ import com.ma.sms.android.data.model.Assure
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.Vehicule
 import com.ma.sms.android.data.repository.DossierRepository
 import com.ma.sms.android.ui.detail.FileToOpen
@@ -62,6 +63,8 @@ data class DossierExpressUiState(
     val assurances: List<Assurance> = emptyList(),
     val isLoadingAssurances: Boolean = false,
     val selectedAssuranceId: Long? = null,
+    val intermediaires: List<Intermediaire> = emptyList(),
+    val isLoadingIntermediaires: Boolean = false,
     val justificatifType: String = DEFAULT_JUSTIFICATIF_TYPE,
 
     // Etape B : documents (photos en attente d'envoi + deja envoyes une fois le dossier cree)
@@ -85,7 +88,12 @@ data class DossierExpressUiState(
     val montantForfait: String = "",
     val reponseAssureForfait: Boolean? = null,
     val isSubmittingForfait: Boolean = false,
-    val forfaitResult: String? = null
+    val forfaitResult: String? = null,
+
+    // Bascule locale (pas derivee de l'etat backend) : permet a l'agent de revenir editer
+    // assure/vehicule a tout moment avant "Fin de mission", meme une fois le dossier passe
+    // en TRAITEMENT_DOSSIER_EXPRESS (voir PhotosAvantReparationSection / AssureVehiculeFormSection).
+    val showAssureVehiculeForm: Boolean = false
 )
 
 class DossierExpressViewModel(
@@ -101,6 +109,7 @@ class DossierExpressViewModel(
 
     init {
         loadAssurances()
+        loadIntermediaires()
     }
 
     fun loadAssurances() {
@@ -114,6 +123,22 @@ class DossierExpressViewModel(
                     _uiState.value = _uiState.value.copy(
                         isLoadingAssurances = false,
                         error = "Impossible de charger la liste des assurances."
+                    )
+                }
+        }
+    }
+
+    fun loadIntermediaires() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingIntermediaires = true)
+            repository.listIntermediaires()
+                .onSuccess { list ->
+                    _uiState.value = _uiState.value.copy(intermediaires = list, isLoadingIntermediaires = false)
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        isLoadingIntermediaires = false,
+                        error = "Impossible de charger la liste des intermédiaires."
                     )
                 }
         }
@@ -135,6 +160,8 @@ class DossierExpressViewModel(
     fun selectReponseAssureForfait(accepted: Boolean) { _uiState.value = _uiState.value.copy(reponseAssureForfait = accepted) }
     fun continueToForfait() { _uiState.value = _uiState.value.copy(showForfaitSection = true) }
     fun backToDocuments() { _uiState.value = _uiState.value.copy(showForfaitSection = false) }
+    fun editAssureVehicule() { _uiState.value = _uiState.value.copy(showAssureVehiculeForm = true) }
+    fun backToPhotosFromForm() { _uiState.value = _uiState.value.copy(showAssureVehiculeForm = false) }
 
     fun addPendingPhoto(file: File, docType: String) {
         val current = _uiState.value.pendingPhotos.toMutableList()
@@ -235,6 +262,26 @@ class DossierExpressViewModel(
                 if (created.isFailure) return@launch
                 current = created.getOrNull()
                 _uiState.value = _uiState.value.copy(dossier = current)
+            } else {
+                // Dossier deja cree : l'agent peut revenir editer assure/vehicule/intermediaire a
+                // tout moment avant "Fin de mission" (voir showAssureVehiculeForm) ; il faut donc
+                // persister ces edits via PUT avant l'upload des photos / avancement d'etat.
+                val updatedDossier = current.copy(
+                    assure = buildAssureFromState(_uiState.value),
+                    vehiculeAssure = buildVehiculeFromState(_uiState.value)
+                )
+                val putResult = repository.updateDossier(updatedDossier.id, updatedDossier)
+                val afterPut = putResult.getOrNull()
+                if (afterPut == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        error = putResult.exceptionOrNull()?.message?.takeIf { m -> m.isNotBlank() }
+                            ?: "Impossible d'enregistrer les modifications."
+                    )
+                    return@launch
+                }
+                current = afterPut
+                _uiState.value = _uiState.value.copy(dossier = current)
             }
 
             val dossierId = current?.id
@@ -316,17 +363,18 @@ class DossierExpressViewModel(
         return "Étape actuelle : ${_uiState.value.dossier?.etat ?: "?"}."
     }
 
-    private fun buildCreateRequest(state: DossierExpressUiState): DossierExpressCreateRequest {
-        val assure = Assure(
-            nom = state.nom.ifBlank { null },
-            prenom = state.prenom.ifBlank { null },
-            telephone = state.telephone.ifBlank { null },
-            email = state.email.ifBlank { null },
-            adresse = null,
-            type = null,
-            intermediaire = state.intermediaire.ifBlank { null }
-        )
-        val vehicule = if (listOf(state.immatriculation, state.marque, state.modele, state.numeroChassis).any { it.isNotBlank() }) {
+    private fun buildAssureFromState(state: DossierExpressUiState): Assure = Assure(
+        nom = state.nom.ifBlank { null },
+        prenom = state.prenom.ifBlank { null },
+        telephone = state.telephone.ifBlank { null },
+        email = state.email.ifBlank { null },
+        adresse = null,
+        type = null,
+        intermediaire = state.intermediaire.ifBlank { null }
+    )
+
+    private fun buildVehiculeFromState(state: DossierExpressUiState): Vehicule? =
+        if (listOf(state.immatriculation, state.marque, state.modele, state.numeroChassis).any { it.isNotBlank() }) {
             Vehicule(
                 immatriculation = state.immatriculation.ifBlank { null },
                 marque = state.marque.ifBlank { null },
@@ -336,10 +384,12 @@ class DossierExpressViewModel(
                 numeroChassis = state.numeroChassis.ifBlank { null }
             )
         } else null
+
+    private fun buildCreateRequest(state: DossierExpressUiState): DossierExpressCreateRequest {
         return DossierExpressCreateRequest(
-            assure = assure,
+            assure = buildAssureFromState(state),
             assurance = Assurance(id = state.selectedAssuranceId ?: 0L, nom = null),
-            vehiculeAssure = vehicule,
+            vehiculeAssure = buildVehiculeFromState(state),
             agentTerrainUserId = agentTerrainUserId,
             agentTerrainUserErId = null,
             express = true

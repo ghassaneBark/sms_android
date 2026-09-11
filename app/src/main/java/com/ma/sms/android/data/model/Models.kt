@@ -61,6 +61,11 @@ data class Assurance(
     val nom: String?
 )
 
+data class Intermediaire(
+    val id: Long,
+    val nom: String?
+)
+
 data class Vehicule(
     val immatriculation: String?,
     val marque: String?,

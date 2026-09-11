@@ -9,6 +9,7 @@ import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -53,6 +54,12 @@ class DossierRepository(private val api: ApiService, private val context: Contex
 
     suspend fun listAssurances(): Result<List<Assurance>> = runCatching {
         api.getAssurances()
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun listIntermediaires(): Result<List<Intermediaire>> = runCatching {
+        api.getIntermediaires()
     }.recoverCatching { throwable ->
         throw extractBusinessMessageOrRethrow(throwable)
     }

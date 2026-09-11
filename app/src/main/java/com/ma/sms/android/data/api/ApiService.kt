@@ -6,6 +6,7 @@ import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PageResponse
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
 import okhttp3.MultipartBody
@@ -33,6 +34,9 @@ interface ApiService {
 
     @GET("api/assurance")
     suspend fun getAssurances(): List<Assurance>
+
+    @GET("api/intermediaire")
+    suspend fun getIntermediaires(): List<Intermediaire>
 
     @GET("api/dossier/{id}/documents")
     suspend fun getDocuments(@Path("id") id: Long): List<DocumentSinistre>

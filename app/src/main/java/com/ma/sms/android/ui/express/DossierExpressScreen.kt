@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -184,11 +185,14 @@ fun DossierExpressScreen(
             when {
                 etat == "FORFAIT_ACCEPTE" -> SuccessSection(reference = state.dossier?.reference, onBack = onFinished)
                 etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showForfaitSection -> ForfaitSection(state = state, vm = vm, onBack = vm::backToDocuments)
+                etat == "TRAITEMENT_DOSSIER_EXPRESS" && state.showAssureVehiculeForm ->
+                    AssureVehiculeFormSection(state = state, vm = vm, onBack = vm::backToPhotosFromForm)
                 etat == "TRAITEMENT_DOSSIER_EXPRESS" -> PhotosAvantReparationSection(
                     state = state,
                     vm = vm,
                     etat = etat,
-                    onTakePhoto = { docType -> launchCamera(docType) }
+                    onTakePhoto = { docType -> launchCamera(docType) },
+                    onEditAssureVehicule = vm::editAssureVehicule
                 )
                 else -> AssureVehiculeFormSection(state = state, vm = vm)
             }
@@ -279,18 +283,29 @@ private fun ForfaitSection(state: DossierExpressUiState, vm: DossierExpressViewM
 @Composable
 private fun AssureVehiculeFormSection(
     state: DossierExpressUiState,
-    vm: DossierExpressViewModel
+    vm: DossierExpressViewModel,
+    onBack: (() -> Unit)? = null
 ) {
     val dossierCreated = state.dossier != null
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionTitle("Assuré")
+            if (onBack != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Retour aux photos")
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    SectionTitle("Assuré")
+                }
+            } else {
+                SectionTitle("Assuré")
+            }
             OutlinedTextField(value = state.nom, onValueChange = vm::updateNom, label = { Text("Nom") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = state.prenom, onValueChange = vm::updatePrenom, label = { Text("Prénom") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = state.telephone, onValueChange = vm::updateTelephone, label = { Text("Téléphone *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = state.email, onValueChange = vm::updateEmail, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = state.intermediaire, onValueChange = vm::updateIntermediaire, label = { Text("Intermédiaire *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            IntermediaireDropdown(state = state, vm = vm)
 
             AssuranceDropdown(state = state, vm = vm)
         }
@@ -331,8 +346,17 @@ private fun PhotosAvantReparationSection(
     state: DossierExpressUiState,
     vm: DossierExpressViewModel,
     etat: String?,
-    onTakePhoto: (String) -> Unit
+    onTakePhoto: (String) -> Unit,
+    onEditAssureVehicule: () -> Unit
 ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TextButton(onClick = onEditAssureVehicule) {
+            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Modifier assuré / véhicule")
+        }
+    }
+
     CarDiagramCard(
         etat = etat,
         documents = state.documents,
@@ -425,6 +449,37 @@ private fun AssuranceDropdown(state: DossierExpressUiState, vm: DossierExpressVi
                     text = { Text(assurance.nom ?: "Assurance #${assurance.id}") },
                     onClick = {
                         vm.selectAssurance(assurance.id)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IntermediaireDropdown(state: DossierExpressUiState, vm: DossierExpressViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = state.intermediaire,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Intermédiaire *") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (state.isLoadingIntermediaires) {
+                DropdownMenuItem(text = { Text("Chargement...") }, onClick = {})
+            }
+            state.intermediaires.mapNotNull { it.nom }.filter { it.isNotBlank() }.forEach { nom ->
+                DropdownMenuItem(
+                    text = { Text(nom) },
+                    onClick = {
+                        vm.updateIntermediaire(nom)
                         expanded = false
                     }
                 )
