@@ -87,6 +87,7 @@ data class DossierExpressUiState(
     val showForfaitSection: Boolean = false,
     val montantForfait: String = "",
     val reponseAssureForfait: Boolean? = null,
+    val motifRejetForfait: String = "",
     val isSubmittingForfait: Boolean = false,
     val forfaitResult: String? = null,
 
@@ -217,6 +218,7 @@ class DossierExpressViewModel(
     fun selectJustificatifType(type: String) { _uiState.value = _uiState.value.copy(justificatifType = type) }
     fun updateMontantForfait(v: String) { _uiState.value = _uiState.value.copy(montantForfait = v) }
     fun selectReponseAssureForfait(accepted: Boolean) { _uiState.value = _uiState.value.copy(reponseAssureForfait = accepted) }
+    fun updateMotifRejetForfait(v: String) { _uiState.value = _uiState.value.copy(motifRejetForfait = v) }
     fun continueToForfait() { _uiState.value = _uiState.value.copy(showForfaitSection = true) }
     fun backToDocuments() { _uiState.value = _uiState.value.copy(showForfaitSection = false) }
     fun editAssureVehicule() { _uiState.value = _uiState.value.copy(showAssureVehiculeForm = true) }
@@ -548,10 +550,16 @@ class DossierExpressViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSubmittingForfait = true, error = null, forfaitResult = null)
 
-            // Proposition + reponse ensemble, dans la meme entree AccordForfait.
+            // Proposition + reponse ensemble, dans la meme entree AccordForfait. Motif de rejet
+            // uniquement pertinent en cas de refus (ignore/vide sinon).
             val proposalDossier = dossier.copy(
                 accordForfaits = listOf(
-                    AccordForfait(typeAccord = "FORFAIT", montantForfait = montant, reponseAssureForfait = reponse)
+                    AccordForfait(
+                        typeAccord = "FORFAIT",
+                        montantForfait = montant,
+                        reponseAssureForfait = reponse,
+                        motifRejetForfait = if (!reponse) state.motifRejetForfait.ifBlank { null } else null
+                    )
                 )
             )
             val putResult = repository.updateDossier(dossierId, proposalDossier)

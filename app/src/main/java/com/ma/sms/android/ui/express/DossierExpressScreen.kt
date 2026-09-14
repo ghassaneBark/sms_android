@@ -278,6 +278,15 @@ private fun ForfaitSection(state: DossierExpressUiState, vm: DossierExpressViewM
                     modifier = Modifier.weight(1f)
                 ) { Text("Refusé") }
             }
+            if (state.reponseAssureForfait == false) {
+                OutlinedTextField(
+                    value = state.motifRejetForfait,
+                    onValueChange = vm::updateMotifRejetForfait,
+                    label = { Text("Motif du rejet") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Button(
                 onClick = { vm.submitForfait() },
                 enabled = !state.isSubmittingForfait,

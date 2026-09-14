@@ -80,7 +80,8 @@ data class AccordForfait(
     val id: Long? = null,
     val typeAccord: String = "FORFAIT",
     val montantForfait: Double,
-    val reponseAssureForfait: Boolean? = null
+    val reponseAssureForfait: Boolean? = null,
+    val motifRejetForfait: String? = null
 )
 
 /** Corps de la requete de creation d'un dossier depuis le terrain ("Dossier Express"). */
