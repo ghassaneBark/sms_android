@@ -445,11 +445,14 @@ class DossierExpressViewModel(
         }.awaitAll()
     }
 
-    private fun refreshDocuments(dossierId: Long) {
-        viewModelScope.launch {
-            repository.getDocuments(dossierId).onSuccess { docs ->
-                _uiState.value = _uiState.value.copy(documents = docs)
-            }
+    // "suspend" (pas un launch interne) : saveProgress() doit attendre que state.documents soit
+    // reellement a jour avant de se terminer, sinon le bouton "Continuer vers le forfait" (gate
+    // sur requiredExpressDocumentsUploaded, qui lit state.documents) peut rester invisible juste
+    // apres l'upload des photos, meme quand tout a bien ete televerse — corrige tant qu'on ne
+    // quitte pas l'ecran, sans avoir besoin de sortir/rouvrir le dossier pour forcer un rechargement.
+    private suspend fun refreshDocuments(dossierId: Long) {
+        repository.getDocuments(dossierId).onSuccess { docs ->
+            _uiState.value = _uiState.value.copy(documents = docs)
         }
     }
 
