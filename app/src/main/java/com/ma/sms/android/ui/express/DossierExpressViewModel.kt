@@ -352,12 +352,13 @@ class DossierExpressViewModel(
                 }
                 if (created.isFailure) return@launch
                 current = created.getOrNull()
-                // Reste sur la page informations (au lieu de retomber sur les photos des que
-                // TRAITEMENT_DOSSIER_EXPRESS est atteint) : l'agent vient de creer le dossier
-                // depuis ce formulaire, ses photos en attente viennent d'etre listees pour
-                // upload ci-dessous - il doit pouvoir enchainer avec l'extraction carte grise
-                // sans etre renvoye ailleurs.
-                _uiState.value = _uiState.value.copy(dossier = current, showAssureVehiculeForm = true)
+                // Une fois cree, on laisse le routage normal (le "when" de DossierExpressScreen)
+                // amener l'agent vers l'ecran photos des que TRAITEMENT_DOSSIER_EXPRESS est
+                // atteint : les photos/pieces prises a l'etape 1 sont deja en attente d'upload
+                // ci-dessous, donc "Continuer vers le forfait" doit pouvoir y apparaitre tout de
+                // suite si tout est complet. Rester sur cette meme page (bouton "Creer le dossier"
+                // devenu "Enregistrer" sans action visible) etait confus pour l'agent.
+                _uiState.value = _uiState.value.copy(dossier = current)
             } else {
                 // Dossier deja cree : l'agent peut revenir editer assure/vehicule/intermediaire a
                 // tout moment avant "Fin de mission" (voir showAssureVehiculeForm) ; il faut donc
