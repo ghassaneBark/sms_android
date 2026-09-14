@@ -562,7 +562,10 @@ class DossierExpressViewModel(
             }
             _uiState.value = _uiState.value.copy(dossier = afterPut)
 
-            // Routage final : accepte -> FORFAIT_ACCEPTE, refuse -> boucle sur TRAITEMENT_DOSSIER_EXPRESS.
+            // Routage final : accepte -> FORFAIT_ACCEPTE ; refuse -> EN_ATTENTE_ACCORD_FORFAIT,
+            // le dossier sort du circuit express et rejoint le circuit normal (responsable accord
+            // forfait back-office) - la mission de l'agent terrain s'arrete la dans les deux cas,
+            // il n'y a plus rien a saisir sur le telephone.
             val advanceResult = repository.advanceState(dossierId)
             val afterAdvance = advanceResult.getOrNull()
             if (afterAdvance == null) {
@@ -573,14 +576,12 @@ class DossierExpressViewModel(
 
             if (afterAdvance.etat == "FORFAIT_ACCEPTE") {
                 _uiState.value = _uiState.value.copy(forfaitResult = "Forfait accepté. Dossier finalisé.")
-                _finished.emit(Unit)
             } else {
                 _uiState.value = _uiState.value.copy(
-                    forfaitResult = "Forfait refusé par l'assuré. Vous pouvez proposer un nouveau montant.",
-                    montantForfait = "",
-                    reponseAssureForfait = null
+                    forfaitResult = "Forfait refusé par l'assuré. Le dossier est transmis au service accord forfait."
                 )
             }
+            _finished.emit(Unit)
         }
     }
 
