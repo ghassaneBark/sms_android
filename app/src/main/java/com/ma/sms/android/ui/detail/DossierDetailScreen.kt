@@ -86,6 +86,20 @@ private val AGENT_TERRAIN_STATES = setOf(
     "ATTENTE_PHOTO_FIN_REPARATION"
 )
 
+// Ordre des 3 phases photo agent terrain, avec leur libelle d'affichage : sert a la section
+// "Photos des etapes precedentes" (consultation uniquement, voir PreviousPhasePhotosCard).
+private val AGENT_TERRAIN_PHASE_LABELS = linkedMapOf(
+    "AFFECTATION_AGENT_TERRAIN" to "Avant réparation",
+    "ATTENTE_EXPERTISE_SR" to "En cours de réparation",
+    "ATTENTE_PHOTO_FIN_REPARATION" to "Après réparation"
+)
+
+// Phases autres que l'etat courant : une phase qui n'a pas encore eu lieu n'a simplement aucun
+// document, donc ce filtre suffit a ne montrer que du contenu reellement "precedent" sans avoir
+// a raisonner sur l'ordre chronologique explicitement.
+fun previousAgentTerrainPhases(etat: String?): List<String> =
+    AGENT_TERRAIN_PHASE_LABELS.keys.filter { it != etat }
+
 // En cours de reparation / apres reparation : on ne montre plus les pieces des phases
 // precedentes (photos avant reparation, permis, CIN, garantie, justificatifs, factures),
 // seules Carte grise et Attestation assurance restent visibles, en consultation uniquement.
@@ -158,8 +172,12 @@ fun isAngleUploadedForState(angle: VehicleAngle, etat: String?, documents: List<
         (doc.originalFileName ?: doc.fileName ?: "").startsWith(angleFileKeyForState(angle, etat))
     }
 
+// "En cours de reparation" n'a plus de croquis/angles (voir DossierDetailScreen, invocation de
+// CarDiagramCard) : la condition "tous les angles requis faits" n'a donc plus de sens pour cet
+// etat et doit etre consideree comme toujours remplie, sinon "Fin de mission" resterait bloque.
 fun allRequiredAnglesDoneForState(etat: String?, documents: List<DocumentSinistre>): Boolean =
-    VEHICLE_ANGLES.filter { it.required }.all { isAngleUploadedForState(it, etat, documents) }
+    etat == "ATTENTE_EXPERTISE_SR"
+        || VEHICLE_ANGLES.filter { it.required }.all { isAngleUploadedForState(it, etat, documents) }
 
 // Document deja envoye correspondant a un angle donne, pour permettre sa consultation.
 fun findAngleDocument(angle: VehicleAngle, etat: String?, documents: List<DocumentSinistre>): DocumentSinistre? =
@@ -191,7 +209,8 @@ private val JUSTIFICATIF_SUBTYPES = listOf(
 
 private val FACTURE_TYPES = listOf("FACTURE PC ORIGINAL", "FACTURE PC RECUPERATION")
 
-private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
+// Publique (pas private) : reutilisee par ui/express/DossierExpressScreen.kt.
+fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
     // En cours/apres reparation : la capture photo obligatoire de la phase se fait via le
     // diagramme (CarDiagramCard) ; Carte grise/Assurance sont consultables uniquement, donc
     // plus aucun bouton de capture generique n'est propose ici.
@@ -202,7 +221,8 @@ private fun extraDocTypesForEtat(etat: String?): List<String> = when (etat) {
 }
 
 // Libelle court affiche sur l'ecran de capture pour un docType donne
-private fun cameraDisplayLabel(docType: String, etat: String?): String {
+// Publique (pas private) : reutilisee par ui/search/DossierContributeScreen.kt.
+fun cameraDisplayLabel(docType: String, etat: String?): String {
     VEHICLE_ANGLES.forEach { angle ->
         if (angleDocTypeForState(angle, etat) == docType) return angle.label
     }
@@ -440,14 +460,19 @@ fun DossierDetailScreen(
                             )
                         }
 
-                        CarDiagramCard(
-                            etat = etat,
-                            documents = state.documents,
-                            pendingPhotos = state.pendingPhotos,
-                            onTakePhoto = { docType -> launchCamera(docType) },
-                            onViewDocument = { doc -> vm.viewDocument(doc) },
-                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
-                        )
+                        // "En cours de reparation" (ATTENTE_EXPERTISE_SR) : plus de croquis/angles
+                        // impose, seulement des photos libres (voir ExtraVehiclePhotosCard
+                        // ci-dessous, qui devient alors la seule action de capture disponible).
+                        if (etat != "ATTENTE_EXPERTISE_SR") {
+                            CarDiagramCard(
+                                etat = etat,
+                                documents = state.documents,
+                                pendingPhotos = state.pendingPhotos,
+                                onTakePhoto = { docType -> launchCamera(docType) },
+                                onViewDocument = { doc -> vm.viewDocument(doc) },
+                                onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
+                            )
+                        }
 
                         // Photos supplementaires (optionnelles) : disponibles a chaque phase
                         // (avant/en cours/apres reparation), filtrees pour ne montrer que celles
@@ -473,6 +498,12 @@ fun DossierDetailScreen(
                             onRemovePending = { index -> vm.removePendingPhoto(index) },
                             onViewDocument = { doc -> vm.viewDocument(doc) },
                             onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
+                        )
+
+                        PreviousPhasePhotosCard(
+                            etat = etat,
+                            documents = state.documents,
+                            onViewDocument = { doc -> vm.viewDocument(doc) }
                         )
 
                         // Angles manquants ou photo fin réparation manquante
@@ -681,8 +712,10 @@ private fun VehiclePhotosCard(
 }
 
 // --- Card photos supplémentaires véhicule ---
+// Publique (pas private) : reutilisee telle quelle par l'ecran de contribution photo
+// (ui/search/DossierContributeScreen.kt) pour un agent non assigne au dossier.
 @Composable
-private fun ExtraVehiclePhotosCard(
+fun ExtraVehiclePhotosCard(
     etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,
@@ -808,9 +841,79 @@ private fun ExtraVehiclePhotosCard(
     }
 }
 
-// --- Card autres documents ---
+// --- Card photos des etapes precedentes (consultation uniquement) ---
+// Repliee par defaut : regroupe, par phase, les photos deja prises lors des etapes agent terrain
+// anterieures a l'etat courant (avant/en cours/apres reparation), qui restent sinon invisibles
+// une fois la phase suivante commencee (cf. isDocTypeLockedForState).
 @Composable
-private fun OtherDocumentsCard(
+private fun PreviousPhasePhotosCard(
+    etat: String?,
+    documents: List<DocumentSinistre>,
+    onViewDocument: (DocumentSinistre) -> Unit
+) {
+    val phaseGroups = previousAgentTerrainPhases(etat).mapNotNull { phase ->
+        val docs = documents.filter { resolveAgentTerrainPhaseForDocType(it.type) == phase }
+        if (docs.isEmpty()) null else phase to docs
+    }
+    if (phaseGroups.isEmpty()) return
+
+    var expanded by remember { mutableStateOf(false) }
+    val totalCount = phaseGroups.sumOf { it.second.size }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SectionTitle("Photos des étapes précédentes ($totalCount)")
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Réduire" else "Développer"
+                )
+            }
+
+            if (expanded) {
+                phaseGroups.forEach { (phase, docs) ->
+                    Text(
+                        AGENT_TERRAIN_PHASE_LABELS[phase] ?: phase,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    docs.forEachIndexed { i, doc ->
+                        if (i > 0) HorizontalDivider(thickness = 0.5.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { onViewDocument(doc) }.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(doc.type ?: "Photo", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                doc.originalFileName?.let {
+                                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            IconButton(onClick = { onViewDocument(doc) }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Visibility, contentDescription = "Consulter", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Card autres documents ---
+// Publique (pas private) : reutilisee par ui/express/DossierExpressScreen.kt.
+@Composable
+fun OtherDocumentsCard(
     etat: String?,
     documents: List<DocumentSinistre>,
     pendingPhotos: List<PendingPhoto>,

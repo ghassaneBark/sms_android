@@ -21,6 +21,13 @@ object JwtUtils {
         return json.optString("preferred_username").ifBlank { null }
     }
 
+    /** Identifiant (claim "sub") de l'utilisateur courant, ex: pour renseigner agentTerrainUserId. */
+    fun extractUserId(token: String?): String? {
+        if (token.isNullOrBlank()) return null
+        val json = decodePayload(token) ?: return null
+        return json.optString("sub").ifBlank { null }
+    }
+
     private fun decodePayload(token: String): JSONObject? {
         val parts = token.split(".")
         if (parts.size < 2) return null

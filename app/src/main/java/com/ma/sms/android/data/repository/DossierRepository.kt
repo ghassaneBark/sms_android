@@ -4,10 +4,14 @@ import android.content.Context
 import android.net.Uri
 import com.ma.sms.android.data.api.ApiService
 import com.ma.sms.android.data.model.AgentTerrainUser
+import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -20,12 +24,45 @@ class DossierRepository(private val api: ApiService, private val context: Contex
         api.getDossiers()
     }
 
+    /** Recherche tous les dossiers de l'antenne de l'agent (pas seulement les siens), en lecture seule. */
+    suspend fun searchAllDossiersInAntenne(): Result<List<Dossier>> = runCatching {
+        api.getDossiersWithScope("all_readonly")
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
     suspend fun getDossier(id: Long): Result<Dossier> = runCatching {
         api.getDossier(id)
     }
 
     suspend fun getDocuments(dossierId: Long): Result<List<DocumentSinistre>> = runCatching {
         api.getDocuments(dossierId)
+    }
+
+    /** Cree un nouveau dossier depuis le terrain ("Dossier Express"). */
+    suspend fun createDossierExpress(request: DossierExpressCreateRequest): Result<Dossier> = runCatching {
+        api.createDossier(request)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    /** Met a jour le dossier (DTO complet attendu par le backend, ex: proposition/reponse de forfait). */
+    suspend fun updateDossier(dossierId: Long, dossier: Dossier): Result<Dossier> = runCatching {
+        api.updateDossier(dossierId, dossier)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun listAssurances(): Result<List<Assurance>> = runCatching {
+        api.getAssurances()
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun listIntermediaires(): Result<List<Intermediaire>> = runCatching {
+        api.getIntermediaires()
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
     }
 
     suspend fun uploadPhoto(dossierId: Long, photoFile: File, documentType: String): Result<DocumentSinistre> = runCatching {
@@ -111,6 +148,13 @@ class DossierRepository(private val api: ApiService, private val context: Contex
 
     suspend fun reassignAgentTerrain(dossierId: Long, newAgentTerrainUserId: String): Result<Dossier> = runCatching {
         api.reassignAgentTerrain(dossierId, ReassignAgentTerrainRequest(newAgentTerrainUserId))
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    /** Extrait les champs vehicule depuis la carte grise deja televersee sur le dossier (IA vision). */
+    suspend fun extractVehiculeFromCarteGrise(dossierId: Long): Result<VehiculeExtraction> = runCatching {
+        api.extractVehiculeFromCarteGrise(dossierId)
     }.recoverCatching { throwable ->
         throw extractBusinessMessageOrRethrow(throwable)
     }

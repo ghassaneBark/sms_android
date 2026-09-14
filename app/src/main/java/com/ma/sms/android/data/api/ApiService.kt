@@ -1,11 +1,15 @@
 package com.ma.sms.android.data.api
 
 import com.ma.sms.android.data.model.AgentTerrainUser
+import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.data.model.DossierExpressCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
+import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PageResponse
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -17,8 +21,23 @@ interface ApiService {
     @GET("api/dossier")
     suspend fun getDossiers(): List<Dossier>
 
+    @GET("api/dossier")
+    suspend fun getDossiersWithScope(@Query("scope") scope: String): List<Dossier>
+
     @GET("api/dossier/{id}")
     suspend fun getDossier(@Path("id") id: Long): Dossier
+
+    @POST("api/dossier")
+    suspend fun createDossier(@Body body: DossierExpressCreateRequest): Dossier
+
+    @PUT("api/dossier/{id}")
+    suspend fun updateDossier(@Path("id") id: Long, @Body body: Dossier): Dossier
+
+    @GET("api/assurance")
+    suspend fun getAssurances(): List<Assurance>
+
+    @GET("api/intermediaire")
+    suspend fun getIntermediaires(): List<Intermediaire>
 
     @GET("api/dossier/{id}/documents")
     suspend fun getDocuments(@Path("id") id: Long): List<DocumentSinistre>
@@ -48,6 +67,9 @@ interface ApiService {
         @Path("id") id: Long,
         @Body body: ReassignAgentTerrainRequest
     ): Dossier
+
+    @POST("api/dossier/{id}/ai/extract-vehicule")
+    suspend fun extractVehiculeFromCarteGrise(@Path("id") id: Long): VehiculeExtraction
 
     @GET("api/dossier/{id}/devis")
     suspend fun getDevisByDossier(@Path("id") id: Long): List<Devis>

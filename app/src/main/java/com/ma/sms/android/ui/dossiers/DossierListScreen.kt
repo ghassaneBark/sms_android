@@ -27,7 +27,9 @@ import com.ma.sms.android.data.repository.DossierRepository
 @Composable
 fun DossierListScreen(
     repository: DossierRepository,
-    onDossierClick: (Long) -> Unit,
+    onDossierClick: (Dossier) -> Unit,
+    onNewDossierExpress: () -> Unit = {},
+    onSearchDossiers: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     val vm: DossierListViewModel = viewModel(factory = object : ViewModelProvider.Factory {
@@ -77,11 +79,19 @@ fun DossierListScreen(
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
                     }
+                    IconButton(onClick = onSearchDossiers) {
+                        Icon(Icons.Default.Search, contentDescription = "Rechercher un dossier")
+                    }
                     IconButton(onClick = { showLogoutDialog = true }) {
                         Icon(Icons.Default.Logout, contentDescription = "Déconnexion")
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNewDossierExpress) {
+                Icon(Icons.Default.Add, contentDescription = "Nouveau dossier express")
+            }
         }
     ) { padding ->
         PullToRefreshBox(
@@ -115,7 +125,7 @@ fun DossierListScreen(
                 else -> {
                     LazyColumn(state = listState, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(state.dossiers, key = { it.id }) { dossier ->
-                            DossierCard(dossier = dossier, onClick = { onDossierClick(dossier.id) })
+                            DossierCard(dossier = dossier, onClick = { onDossierClick(dossier) })
                         }
                     }
                 }
