@@ -27,6 +27,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.repository.DossierRepository
+import com.ma.sms.android.ui.components.OfflineBanner
 import com.ma.sms.android.ui.detail.CameraCaptureScreen
 import com.ma.sms.android.ui.detail.CarDiagramCard
 import com.ma.sms.android.ui.detail.ExtraVehiclePhotosCard
@@ -61,6 +62,9 @@ fun DossierExpressScreen(
         }
     })
     val state by vm.uiState.collectAsState()
+
+    val connectivityObserver = remember { (context.applicationContext as SmsApplication).connectivityObserver }
+    val isConnected by connectivityObserver.isConnected.collectAsState()
 
     LaunchedEffect(Unit) {
         vm.finished.collect { onFinished() }
@@ -163,17 +167,20 @@ fun DossierExpressScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Dossier Express") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Retour") }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+            Column {
+                TopAppBar(
+                    title = { Text("Dossier Express") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Retour") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 )
-            )
+                if (!isConnected) OfflineBanner()
+            }
         }
     ) { padding ->
         Column(

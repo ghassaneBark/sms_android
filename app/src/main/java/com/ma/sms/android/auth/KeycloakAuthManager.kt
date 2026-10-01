@@ -63,12 +63,25 @@ class KeycloakAuthManager(private val context: Context, private val tokenManager
                 .setRefreshToken(refresh)
                 .build()
             authService.performTokenRequest(tokenRequest) { tokenResponse, ex ->
-                if (ex != null || tokenResponse == null) {
-                    tokenManager.clear()
-                    cont.resumeWith(Result.failure(ex ?: Exception("Refresh échoué")))
-                } else {
-                    saveTokens(tokenResponse)
-                    cont.resumeWith(Result.success(Result.success(tokenResponse.accessToken ?: "")))
+                when {
+                    tokenResponse != null -> {
+                        saveTokens(tokenResponse)
+                        cont.resumeWith(Result.success(Result.success(tokenResponse.accessToken ?: "")))
+                    }
+                    ex != null && ex.type == AuthorizationException.TYPE_OAUTH_TOKEN_ERROR -> {
+                        // Rejet explicite du refresh token par Keycloak (ex: invalid_grant, token
+                        // revoque/expire cote serveur) : la session ne peut plus etre restauree,
+                        // on efface les tokens pour forcer une reconnexion.
+                        tokenManager.clear()
+                        cont.resumeWith(Result.failure(ex))
+                    }
+                    else -> {
+                        // Echec reseau/timeout (TYPE_GENERAL_ERROR) ou erreur indeterminee : on ne
+                        // touche PAS aux tokens stockes, l'appelant (AuthInterceptor) pourra
+                        // reessayer des que la connectivite revient. Sinon un simple passage hors
+                        // connexion deconnectait l'agent terrain.
+                        cont.resumeWith(Result.failure(ex ?: Exception("Refresh échoué (réseau ?)")))
+                    }
                 }
             }
         }

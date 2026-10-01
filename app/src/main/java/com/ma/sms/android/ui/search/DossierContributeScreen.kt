@@ -21,8 +21,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.repository.DossierRepository
+import com.ma.sms.android.ui.components.OfflineBanner
 import com.ma.sms.android.ui.detail.CameraCaptureScreen
 import com.ma.sms.android.ui.detail.CarDiagramCard
 import com.ma.sms.android.ui.detail.ExtraVehiclePhotosCard
@@ -42,6 +44,7 @@ import com.ma.sms.android.ui.detail.isExtraVehiclePhotoDocType
 // ExtraVehiclePhotosCard, cameraDisplayLabel...) qui se base sur un etat. Le vrai Dossier.etat n'est
 // en revanche jamais modifie par cet ecran (aucun appel a advanceState ici).
 private enum class ContributePhase(val label: String, val etat: String) {
+    AVANT("Avant réparation", "AFFECTATION_AGENT_TERRAIN"),
     EN_COURS("En cours de réparation", "ATTENTE_EXPERTISE_SR"),
     APRES("Après réparation", "ATTENTE_PHOTO_FIN_REPARATION")
 }
@@ -71,6 +74,9 @@ fun DossierContributeScreen(
     })
     val state by vm.uiState.collectAsState()
 
+    val connectivityObserver = remember { (context.applicationContext as SmsApplication).connectivityObserver }
+    val isConnected by connectivityObserver.isConnected.collectAsState()
+
     // Ouvre le fichier telecharge (piece jointe) dans la visionneuse systeme des qu'un
     // telechargement aboutit — identique a DossierDetailScreen.
     LaunchedEffect(state.fileToOpen) {
@@ -91,6 +97,17 @@ fun DossierContributeScreen(
     // Etape A tant que null (phase pas encore validee), etape B une fois une phase validee.
     var selectedPhase by remember { mutableStateOf<ContributePhase?>(null) }
     var activeEtat by remember { mutableStateOf<String?>(null) }
+
+    // Ne propose que les phases pas encore forcement depassees d'apres l'etat reel du dossier
+    // (calcule cote backend, cf. DossierState.resolveContributablePhases — evite par exemple de
+    // proposer "avant reparation" pour un dossier deja en negociation d'accord). Si absent
+    // (dossier issu d'un vieux cache local sans ce champ), on propose les 3 par defaut plutot que
+    // de bloquer l'agent.
+    val availablePhases = remember(dossier.contributablePhases) {
+        val allowed = dossier.contributablePhases
+        if (allowed == null) ContributePhase.values().toList()
+        else ContributePhase.values().filter { it.etat in allowed }
+    }
 
     // File d'attente de captures pour l'ecran camera integre — logique identique a
     // DossierDetailScreen.launchCamera, adaptee a activeEtat et aux documents/pendingPhotos
@@ -172,24 +189,27 @@ fun DossierContributeScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Contribuer des photos") },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        // Depuis l'etape B (capture), le retour revient a l'etape A (selection de
-                        // phase) plutot que de quitter tout l'ecran ; seul un retour depuis
-                        // l'etape A quitte reellement (onDone).
-                        if (activeEtat != null) activeEtat = null else onDone()
-                    }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Retour")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+            Column {
+                TopAppBar(
+                    title = { Text("Contribuer des photos") },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            // Depuis l'etape B (capture), le retour revient a l'etape A (selection de
+                            // phase) plutot que de quitter tout l'ecran ; seul un retour depuis
+                            // l'etape A quitte reellement (onDone).
+                            if (activeEtat != null) activeEtat = null else onDone()
+                        }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Retour")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 )
-            )
+                if (!isConnected) OfflineBanner()
+            }
         }
     ) { padding ->
         Column(
@@ -235,6 +255,7 @@ fun DossierContributeScreen(
             if (activeEtat == null) {
                 // --- Etape A : selection de la phase ---
                 PhaseSelectionCard(
+                    phases = availablePhases,
                     selected = selectedPhase,
                     onSelect = { selectedPhase = it },
                     onValidate = { selectedPhase?.let { activeEtat = it.etat } }
@@ -310,6 +331,7 @@ fun DossierContributeScreen(
 // (celle-ci ne fait jamais avancer d'etat, uniquement creer/uploader des documents).
 @Composable
 private fun PhaseSelectionCard(
+    phases: List<ContributePhase>,
     selected: ContributePhase?,
     onSelect: (ContributePhase) -> Unit,
     onValidate: () -> Unit
@@ -322,7 +344,7 @@ private fun PhaseSelectionCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            ContributePhase.values().forEach { phase ->
+            phases.forEach { phase ->
                 val isSelected = selected == phase
                 Surface(
                     onClick = { onSelect(phase) },

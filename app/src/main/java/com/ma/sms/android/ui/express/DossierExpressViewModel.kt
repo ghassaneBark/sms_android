@@ -2,6 +2,7 @@ package com.ma.sms.android.ui.express
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ma.sms.android.data.local.PendingUpload
 import com.ma.sms.android.data.model.AccordForfait
 import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Assure
@@ -14,12 +15,15 @@ import com.ma.sms.android.data.repository.DossierRepository
 import com.ma.sms.android.ui.detail.FileToOpen
 import com.ma.sms.android.ui.detail.PendingPhoto
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -124,11 +128,31 @@ class DossierExpressViewModel(
     private val _finished = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val finished: SharedFlow<Unit> = _finished
 
+    // Dernier instantane Room observe une fois le dossier cree (id connu). Avant creation, aucune
+    // ligne Room n'existe pour ces photos (pas de dossierId a rattacher) : state.pendingPhotos
+    // reste alors une simple liste en memoire, comme avant — creation de dossier hors scope de la
+    // durabilite offline pour cette passe (cf. contraintes), transferee vers la file Room des que
+    // le dossier existe (voir saveProgress()).
+    private var pendingUploads: List<PendingUpload> = emptyList()
+    private var pendingUploadsJob: Job? = null
+
     init {
         loadAssurances()
         loadIntermediaires()
         if (existingDossierId != null) {
             loadExistingDossier(existingDossierId)
+        }
+    }
+
+    private fun startObservingPendingUploads(dossierId: Long) {
+        pendingUploadsJob?.cancel()
+        pendingUploadsJob = viewModelScope.launch {
+            repository.observePendingUploads(dossierId).collect { uploads ->
+                pendingUploads = uploads
+                _uiState.value = _uiState.value.copy(
+                    pendingPhotos = uploads.map { PendingPhoto(File(it.localFilePath), it.documentType) }
+                )
+            }
         }
     }
 
@@ -142,22 +166,29 @@ class DossierExpressViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingExisting = true, error = null)
             val dossierResult = repository.getDossier(dossierId)
-            val dossier = dossierResult.getOrNull()
+            // Hors ligne (ou reseau indisponible) : repli sur la derniere version connue en cache,
+            // pour que l'agent puisse continuer a prendre des photos sur un dossier deja vu.
+            val dossier = dossierResult.getOrNull() ?: repository.getCachedDossier(dossierId)
             if (dossier == null) {
+                // Diagnostic temporaire : affiche l'etat du cache pour comprendre pourquoi le repli
+                // hors ligne echoue (a retirer une fois le bug identifie).
+                val debug = repository.debugCacheSnapshot(dossierId)
                 _uiState.value = _uiState.value.copy(
                     isLoadingExisting = false,
-                    error = dossierResult.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
-                        ?: "Impossible de charger le dossier."
+                    error = (dossierResult.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                        ?: "Impossible de charger le dossier.") + " [$debug]"
                 )
                 return@launch
             }
             val documents = repository.getDocuments(dossierId).getOrDefault(emptyList())
+            startObservingPendingUploads(dossierId)
             val assure = dossier.assure
             val vehicule = dossier.vehiculeAssure
             _uiState.value = _uiState.value.copy(
                 isLoadingExisting = false,
                 dossier = dossier,
                 documents = documents,
+                error = if (dossierResult.isFailure) "Hors ligne — données peut-être non à jour." else null,
                 nom = assure?.nom.orEmpty(),
                 prenom = assure?.prenom.orEmpty(),
                 telephone = assure?.telephone.orEmpty(),
@@ -226,17 +257,34 @@ class DossierExpressViewModel(
     fun continueFromInitialPhotos() { _uiState.value = _uiState.value.copy(hasCompletedInitialPhotos = true) }
     fun backToInitialPhotos() { _uiState.value = _uiState.value.copy(hasCompletedInitialPhotos = false) }
 
+    // Avant creation du dossier (dossierId inconnu, pas de ligne Room possible) : file d'attente
+    // locale non durable, comme avant. Des que le dossier existe, chaque nouvelle photo passe par
+    // la file Room durable (queuePendingUpload), exactement comme DossierDetailViewModel.
     fun addPendingPhoto(file: File, docType: String) {
-        val current = _uiState.value.pendingPhotos.toMutableList()
-        current.add(PendingPhoto(file, docType))
-        _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        val dossierId = _uiState.value.dossier?.id
+        if (dossierId == null) {
+            val current = _uiState.value.pendingPhotos.toMutableList()
+            current.add(PendingPhoto(file, docType))
+            _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        } else {
+            viewModelScope.launch { repository.queuePendingUpload(dossierId, file, docType) }
+        }
     }
 
     fun removePendingPhoto(index: Int) {
-        val current = _uiState.value.pendingPhotos.toMutableList()
-        current.getOrNull(index)?.file?.delete()
-        current.removeAt(index)
-        _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        val dossierId = _uiState.value.dossier?.id
+        if (dossierId == null) {
+            val current = _uiState.value.pendingPhotos.toMutableList()
+            current.getOrNull(index)?.file?.delete()
+            current.removeAt(index)
+            _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        } else {
+            val upload = pendingUploads.getOrNull(index) ?: return
+            viewModelScope.launch {
+                File(upload.localFilePath).delete()
+                repository.deletePendingUpload(upload.id)
+            }
+        }
     }
 
     /**
@@ -361,6 +409,17 @@ class DossierExpressViewModel(
                 // suite si tout est complet. Rester sur cette meme page (bouton "Creer le dossier"
                 // devenu "Enregistrer" sans action visible) etait confus pour l'agent.
                 _uiState.value = _uiState.value.copy(dossier = current)
+
+                // Le dossierId est maintenant connu : on transfere les photos prises AVANT la
+                // creation (encore uniquement en memoire jusqu'ici) vers la file d'attente durable
+                // (Room), pour qu'elles beneficient desormais du meme filet de securite
+                // (SyncWorker) que le reste de l'app, puis on bascule l'observation sur Room.
+                val newDossierId = current?.id
+                if (newDossierId != null) {
+                    val toTransfer = _uiState.value.pendingPhotos
+                    toTransfer.forEach { repository.queuePendingUpload(newDossierId, it.file, it.docType) }
+                    startObservingPendingUploads(newDossierId)
+                }
             } else {
                 // Dossier deja cree : l'agent peut revenir editer assure/vehicule/intermediaire a
                 // tout moment avant "Fin de mission" (voir showAssureVehiculeForm) ; il faut donc
@@ -389,7 +448,15 @@ class DossierExpressViewModel(
                 return@launch
             }
 
-            val uploadFailures = uploadPendingPhotos(dossierId)
+            // Confirme la file d'attente AVANT la tentative immediate : si celle-ci echoue faute
+            // de reseau, SyncWorker saura qu'il est autorise a reprendre ces photos tout seul.
+            repository.confirmPendingUploads(dossierId)
+
+            // Instantane a jour depuis Room (pas depuis le collecteur pendingUploads, dont la mise
+            // a jour est asynchrone) : garantit que les photos qu'on vient de transferer/mettre en
+            // file ci-dessus sont bien incluses dans cette tentative d'upload immediate.
+            val pendingForUpload = repository.observePendingUploads(dossierId).first()
+            val uploadOutcome = uploadPendingPhotos(dossierId, pendingForUpload)
             refreshDocuments(dossierId)
 
             // Une fois TRAITEMENT_DOSSIER_EXPRESS atteint, "Enregistrer" ne sert qu'a sauvegarder
@@ -407,7 +474,10 @@ class DossierExpressViewModel(
 
             val summary = buildString {
                 append("Dossier enregistré (réf. ${_uiState.value.dossier?.reference ?: dossierId})")
-                if (uploadFailures > 0) append(" — $uploadFailures photo(s) non envoyée(s)")
+                if (uploadOutcome.otherFailed > 0) append(" — ${uploadOutcome.otherFailed} photo(s) non envoyée(s)")
+                if (uploadOutcome.networkFailed > 0) {
+                    append(" — ${uploadOutcome.networkFailed} photo(s) en attente (hors ligne, envoi automatique dès le retour du réseau)")
+                }
                 if (advanceMessage != null) {
                     append(". ")
                     append(advanceMessage)
@@ -419,33 +489,33 @@ class DossierExpressViewModel(
         }
     }
 
-    private suspend fun uploadPendingPhotos(dossierId: Long): Int {
-        val pending = _uiState.value.pendingPhotos
-        if (pending.isEmpty()) return 0
-        val semaphore = Semaphore(MAX_CONCURRENT_PHOTO_UPLOADS)
-        val results = coroutineScopeUploads(pending, dossierId, semaphore)
-        val successFiles = mutableSetOf<File>()
-        results.forEachIndexed { index, result ->
-            if (result.isSuccess) successFiles.add(pending[index].file)
-        }
-        val remaining = pending.filter { it.file !in successFiles }
-        successFiles.forEach { it.delete() }
-        _uiState.value = _uiState.value.copy(pendingPhotos = remaining)
-        return results.count { it.isFailure }
-    }
+    // Nombre d'echecs d'upload immediat, distingue entre "pas de reseau" (la photo reste en attente,
+    // SyncWorker la reprendra automatiquement des que la connexion revient — ce n'est pas un vrai
+    // echec) et "autre erreur" (ex: rejet serveur, a signaler comme un vrai probleme).
+    private data class UploadOutcome(val networkFailed: Int, val otherFailed: Int)
 
-    private suspend fun coroutineScopeUploads(
-        pending: List<PendingPhoto>,
-        dossierId: Long,
-        semaphore: Semaphore
-    ) = kotlinx.coroutines.coroutineScope {
-        pending.map { photo ->
-            async(Dispatchers.IO) {
-                semaphore.withPermit {
-                    repository.uploadPhoto(dossierId, photo.file, photo.docType)
+    // Upload immediat (retour visuel dans le resume de saveProgress) de la file d'attente durable :
+    // succes -> fichier + ligne Room supprimes ; echec -> ligne laissee telle quelle (PENDING),
+    // SyncWorker la reprendra en arriere-plan (pas de logique de retry dupliquee ici).
+    private suspend fun uploadPendingPhotos(dossierId: Long, pending: List<PendingUpload>): UploadOutcome {
+        if (pending.isEmpty()) return UploadOutcome(0, 0)
+        val semaphore = Semaphore(MAX_CONCURRENT_PHOTO_UPLOADS)
+        val results = kotlinx.coroutines.coroutineScope {
+            pending.map { upload ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit {
+                        repository.uploadPhoto(dossierId, File(upload.localFilePath), upload.documentType)
+                            .onSuccess {
+                                File(upload.localFilePath).delete()
+                                repository.deletePendingUpload(upload.id)
+                            }
+                    }
                 }
-            }
-        }.awaitAll()
+            }.awaitAll()
+        }
+        val failed = results.filter { it.isFailure }
+        val networkFailed = failed.count { it.exceptionOrNull() is java.io.IOException }
+        return UploadOutcome(networkFailed = networkFailed, otherFailed = failed.size - networkFailed)
     }
 
     // "suspend" (pas un launch interne) : saveProgress() doit attendre que state.documents soit
