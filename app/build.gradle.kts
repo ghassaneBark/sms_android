@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
     id("com.google.gms.google-services")
 }
 
@@ -13,8 +14,8 @@ android {
         applicationId = "com.ma.sms.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "1.1.34"
+        versionCode = 69
+        versionName = "1.1.67"
         manifestPlaceholders["appAuthRedirectScheme"] = "com.ma.sms.android"
     }
 
@@ -86,5 +87,9 @@ dependencies {
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
     implementation(libs.play.services.location)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+    implementation(libs.work.runtime.ktx)
     debugImplementation(libs.androidx.ui.tooling)
 }

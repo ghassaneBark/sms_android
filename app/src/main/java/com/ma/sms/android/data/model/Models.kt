@@ -27,7 +27,39 @@ data class Dossier(
     val assignedUserId: String?,
     val antenne: AntenneRef?,
     val documents: List<DocumentSinistre>?,
-    val accordForfaits: List<AccordForfait>? = null
+    val accordForfaits: List<AccordForfait>? = null,
+    // Phases photo agent terrain (avant/en cours/apres reparation, en noms d'etat) encore
+    // pertinentes pour ce dossier, calculees cote backend (DossierState.resolveContributablePhases)
+    // a partir du graphe BPMN reel — utilise par DossierContributeScreen. Nullable : absent sur un
+    // Dossier issu d'un cache local ecrit avant l'ajout de ce champ (pas de crash, juste vide).
+    val contributablePhases: List<String>? = null,
+    // Modifiable par l'agent terrain uniquement a l'etat AFFECTATION_AGENT_TERRAIN (cf.
+    // DossierDetailScreen) : pilote le routage EN_ATTENTE_ACCORD_FORFAIT vs EN_ATTENTE_ACCORD
+    // cote backend des la fin de cette phase.
+    val eligiblePourForfait: Boolean? = null
+)
+
+data class DossierMessage(
+    val id: Long,
+    val dossierId: Long,
+    val authorUserId: String?,
+    val message: String?,
+    val createdAt: String?
+)
+
+data class DossierMessageCreateRequest(
+    val message: String
+)
+
+data class PhotoRetakeRequest(
+    val id: Long,
+    val phase: String?,
+    val returnToEtat: String?,
+    val message: String?,
+    val requestedBy: String?,
+    val requestedByLabel: String?,
+    val requestedAt: String?,
+    val resolvedAt: String?
 )
 
 data class AntenneRef(

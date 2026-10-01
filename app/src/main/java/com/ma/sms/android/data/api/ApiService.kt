@@ -5,9 +5,12 @@ import com.ma.sms.android.data.model.Assurance
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
+import com.ma.sms.android.data.model.DossierMessage
+import com.ma.sms.android.data.model.DossierMessageCreateRequest
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PageResponse
+import com.ma.sms.android.data.model.PhotoRetakeRequest
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
 import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MultipartBody
@@ -85,4 +88,13 @@ interface ApiService {
 
     @GET("api/devis/{id}/pdf")
     suspend fun downloadDevisPdf(@Path("id") id: Long): Response<ResponseBody>
+
+    @GET("api/dossier/{id}/photo-retake-requests")
+    suspend fun getPhotoRetakeRequests(@Path("id") id: Long): List<PhotoRetakeRequest>
+
+    @GET("api/dossier/{id}/messages")
+    suspend fun getDossierMessages(@Path("id") id: Long): List<DossierMessage>
+
+    @POST("api/dossier/{id}/messages")
+    suspend fun postDossierMessage(@Path("id") id: Long, @Body body: DossierMessageCreateRequest): DossierMessage
 }

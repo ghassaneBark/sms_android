@@ -10,9 +10,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.ui.components.OfflineBanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,6 +28,9 @@ fun DossierSearchScreen(
     val results = remember(state.query, state.eligibleDossiers) {
         filterDossiers(state.eligibleDossiers, state.query)
     }
+    val context = LocalContext.current
+    val connectivityObserver = remember { (context.applicationContext as SmsApplication).connectivityObserver }
+    val isConnected by connectivityObserver.isConnected.collectAsState()
 
     Scaffold(
         topBar = {
@@ -47,6 +53,7 @@ fun DossierSearchScreen(
             modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (!isConnected) OfflineBanner()
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::updateQuery,
@@ -62,12 +69,12 @@ fun DossierSearchScreen(
             )
 
             when {
-                state.isLoading -> {
+                state.isLoading && state.eligibleDossiers.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
                     }
                 }
-                state.error != null -> {
+                state.error != null && state.eligibleDossiers.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             Icon(Icons.Default.ErrorOutline, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.error)

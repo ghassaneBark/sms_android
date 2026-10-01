@@ -6,12 +6,13 @@ import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.repository.DossierRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 
-// Etats a exclure de la recherche (aucun pour l'instant : tous les etats sont cherchables). A
-// completer plus tard avec les etats ou la contribution photo n'a pas de sens (ex. dossier deja
-// clos), sur demande explicite.
+// Etats a exclure de la recherche cote client. Le filtrage principal (exclure les dossiers deja
+// clos) se fait desormais cote backend (scope "all_active_readonly", cf. DossierRepository) — ce
+// filtre reste ici en filet de securite au cas ou une regle plus fine soit necessaire plus tard.
 val EXCLUDED_STATES = emptySet<String>()
 
 fun contributableStateLabel(etat: String?): String = when (etat) {
@@ -46,6 +47,15 @@ class DossierSearchViewModel(private val repository: DossierRepository) : ViewMo
     val uiState: StateFlow<DossierSearchUiState> = _uiState
 
     init {
+        // Affiche immediatement le cache local (y compris 100% hors ligne), puis se tient a jour
+        // a chaque ecriture du cache (cacheAntenneDossierList, appelee ci-dessous apres chaque
+        // fetch reseau reussi) — meme principe que DossierListViewModel pour "mes dossiers".
+        viewModelScope.launch {
+            repository.observeCachedAntenneDossierList().collect { cached ->
+                val eligible = cached.filter { it.etat !in EXCLUDED_STATES }
+                _uiState.value = _uiState.value.copy(eligibleDossiers = eligible)
+            }
+        }
         loadDossiers()
     }
 
@@ -54,8 +64,8 @@ class DossierSearchViewModel(private val repository: DossierRepository) : ViewMo
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             repository.searchAllDossiersInAntenne()
                 .onSuccess { dossiers ->
-                    val eligible = dossiers.filter { it.etat !in EXCLUDED_STATES }
-                    _uiState.value = _uiState.value.copy(eligibleDossiers = eligible, isLoading = false)
+                    repository.cacheAntenneDossierList(dossiers)
+                    _uiState.value = _uiState.value.copy(isLoading = false)
                 }
                 .onFailure { throwable ->
                     // La permission dossiers.view_all_readonly peut ne pas encore etre accordee au
@@ -65,7 +75,11 @@ class DossierSearchViewModel(private val repository: DossierRepository) : ViewMo
                     } else {
                         throwable.message?.takeIf { it.isNotBlank() } ?: "Impossible de charger les dossiers."
                     }
-                    _uiState.value = _uiState.value.copy(isLoading = false, error = message)
+                    // Pas d'ecran d'erreur bloquant si on a deja quelque chose en cache a montrer.
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        error = if (_uiState.value.eligibleDossiers.isEmpty()) message else null
+                    )
                 }
         }
     }

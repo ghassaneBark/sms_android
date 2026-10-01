@@ -8,6 +8,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,9 +28,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.rememberAsyncImagePainter
+import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Dossier
+import com.ma.sms.android.data.model.DossierMessage
 import com.ma.sms.android.data.repository.DossierRepository
+import com.ma.sms.android.ui.components.OfflineBanner
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -247,6 +253,9 @@ fun DossierDetailScreen(
     })
     val state by vm.uiState.collectAsState()
 
+    val connectivityObserver = remember { (context.applicationContext as SmsApplication).connectivityObserver }
+    val isConnected by connectivityObserver.isConnected.collectAsState()
+
     // Ouvre le fichier telecharge (piece jointe ou PDF accord sur devis) dans la visionneuse
     // systeme des qu'un telechargement aboutit.
     LaunchedEffect(state.fileToOpen) {
@@ -266,6 +275,7 @@ fun DossierDetailScreen(
 
     var showFinMissionDialog by remember { mutableStateOf(false) }
     var showReassignDialog by remember { mutableStateOf(false) }
+    var messageDraft by remember { mutableStateOf("") }
 
     // File d'attente de captures pour l'ecran camera integre (CameraX) :
     // permet d'enchainer plusieurs photos sans quitter l'ecran de l'appli.
@@ -408,22 +418,25 @@ fun DossierDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(state.dossier?.reference ?: "Dossier") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Retour") }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                actions = {
-                    IconButton(onClick = { vm.load() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir", tint = MaterialTheme.colorScheme.onPrimary)
+            Column {
+                TopAppBar(
+                    title = { Text(state.dossier?.reference ?: "Dossier") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Retour") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    actions = {
+                        IconButton(onClick = { vm.load() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
                     }
-                }
-            )
+                )
+                if (!isConnected) OfflineBanner()
+            }
         }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -445,8 +458,12 @@ fun DossierDetailScreen(
                     ) {
                         state.error?.let { ErrorBanner(it) { vm.dismissMessages() } }
                         state.uploadSuccess?.let { SuccessBanner(it) { vm.dismissMessages() } }
+                        state.pendingPhotoRetakeRequest?.message?.let { PhotoRetakeBanner(it) }
 
-                        DossierInfoCard(dossier = state.dossier!!)
+                        DossierInfoCard(
+                            dossier = state.dossier!!,
+                            onEligiblePourForfaitChange = { vm.setEligiblePourForfait(it) }
+                        )
                         AssureCard(dossier = state.dossier!!)
                         VehiculeCard(dossier = state.dossier!!)
 
@@ -463,7 +480,11 @@ fun DossierDetailScreen(
                         // "En cours de reparation" (ATTENTE_EXPERTISE_SR) : plus de croquis/angles
                         // impose, seulement des photos libres (voir ExtraVehiclePhotosCard
                         // ci-dessous, qui devient alors la seule action de capture disponible).
-                        if (etat != "ATTENTE_EXPERTISE_SR") {
+                        // Idem si une reprise photo est en attente pour la phase courante : les
+                        // angles deja valides restent (pas de suppression), seule la capture libre
+                        // via "photos supplémentaires" reste proposée tant que la reprise n'est pas
+                        // terminée (cf. demande du responsable accord forfait/accord).
+                        if (etat != "ATTENTE_EXPERTISE_SR" && state.pendingPhotoRetakeRequest == null) {
                             CarDiagramCard(
                                 etat = etat,
                                 documents = state.documents,
@@ -485,7 +506,8 @@ fun DossierDetailScreen(
                             onDeleteDocument = { docId -> vm.deleteDocument(docId) },
                             onRemovePending = { index -> vm.removePendingPhoto(index) },
                             onViewDocument = { doc -> vm.viewDocument(doc) },
-                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) }
+                            onViewPendingPhoto = { file -> vm.viewPendingPhoto(file) },
+                            retakeInProgress = state.pendingPhotoRetakeRequest != null
                         )
 
                         OtherDocumentsCard(
@@ -591,10 +613,114 @@ fun DossierDetailScreen(
                                 )
                             }
                         }
+
+                        DossierMessagesCard(
+                            messages = state.messages,
+                            isLoading = state.isLoadingMessages,
+                            isSending = state.isSendingMessage,
+                            draft = messageDraft,
+                            onDraftChange = { messageDraft = it },
+                            onSend = {
+                                if (messageDraft.isNotBlank()) {
+                                    vm.sendMessage(messageDraft)
+                                    messageDraft = ""
+                                }
+                            }
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+// --- Fil de messages du dossier ---
+@Composable
+private fun DossierMessagesCard(
+    messages: List<DossierMessage>,
+    isLoading: Boolean,
+    isSending: Boolean,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    Card {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.Chat, contentDescription = null)
+                Text("Messages", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+
+            if (isLoading && messages.isEmpty()) {
+                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            } else if (messages.isEmpty()) {
+                Text(
+                    "Aucun message pour ce dossier.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                // Hauteur bornee + defilement interne : avec beaucoup de messages, la carte ne
+                // doit pas gonfler indefiniment la page (l'agent devrait sinon scroller longtemps
+                // pour atteindre les sections photos en dessous). Se positionne automatiquement
+                // sur le dernier message a chaque chargement/nouvel envoi.
+                val listState = rememberLazyListState()
+                LaunchedEffect(messages.size) {
+                    if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(messages, key = { it.id }) { msg ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(msg.message ?: "", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    formatMessageDate(msg.createdAt),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Écrire un message...") },
+                    singleLine = true
+                )
+                IconButton(onClick = onSend, enabled = !isSending && draft.isNotBlank()) {
+                    if (isSending) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Send, contentDescription = "Envoyer")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatMessageDate(raw: String?): String {
+    if (raw.isNullOrBlank()) return ""
+    return try {
+        val parsed = java.time.LocalDateTime.parse(raw.take(19))
+        parsed.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+    } catch (e: Exception) {
+        raw
     }
 }
 
@@ -723,7 +849,11 @@ fun ExtraVehiclePhotosCard(
     onDeleteDocument: (Long) -> Unit,
     onRemovePending: (Int) -> Unit,
     onViewDocument: (DocumentSinistre) -> Unit = {},
-    onViewPendingPhoto: (File) -> Unit = {}
+    onViewPendingPhoto: (File) -> Unit = {},
+    // Reprise de photo en cours pour cette phase : les photos deja envoyees existaient avant la
+    // demande de reprise, elles ne doivent plus pouvoir etre supprimees (consultation uniquement),
+    // seules les nouvelles captures pas encore envoyees (pendingExtras) restent supprimables.
+    retakeInProgress: Boolean = false
 ) {
     val currentExtraDocType = extraVehiclePhotoDocTypeForState(etat)
     // Ne montrer que les photos supplementaires de la phase courante (pas celles des phases
@@ -791,7 +921,7 @@ fun ExtraVehiclePhotosCard(
 
             uploadedExtras.forEachIndexed { i, doc ->
                 if (i > 0) HorizontalDivider(thickness = 0.5.dp)
-                val isLocked = isDocTypeLockedForState(doc.type, etat)
+                val isLocked = isDocTypeLockedForState(doc.type, etat) || retakeInProgress
                 var showConfirm by remember { mutableStateOf(false) }
                 if (showConfirm) {
                     AlertDialog(
@@ -822,7 +952,8 @@ fun ExtraVehiclePhotosCard(
                             Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (isLocked) {
-                            Text("Phase terminée : consultable uniquement", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                            val lockedReason = if (retakeInProgress) "Photo déjà envoyée : consultable uniquement" else "Phase terminée : consultable uniquement"
+                            Text(lockedReason, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                     IconButton(onClick = { onViewDocument(doc) }, modifier = Modifier.size(32.dp)) {
@@ -1073,7 +1204,7 @@ private fun PendingPhotoRow(pending: PendingPhoto, onRemove: () -> Unit, onView:
 }
 
 @Composable
-private fun DossierInfoCard(dossier: Dossier) {
+private fun DossierInfoCard(dossier: Dossier, onEligiblePourForfaitChange: ((Boolean) -> Unit)? = null) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionTitle("Informations dossier")
@@ -1085,6 +1216,20 @@ private fun DossierInfoCard(dossier: Dossier) {
             InfoRow("Ville expertise", dossier.villeExpertise)
             InfoRow("Ville sinistre", dossier.villeSinistre)
             InfoRow("Assurance", dossier.assurance?.nom)
+            // Modifiable uniquement a l'etat AFFECTATION_AGENT_TERRAIN (pilote le routage
+            // EN_ATTENTE_ACCORD_FORFAIT vs EN_ATTENTE_ACCORD a la fin de cette phase).
+            if (dossier.etat == "AFFECTATION_AGENT_TERRAIN" && onEligiblePourForfaitChange != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = dossier.eligiblePourForfait == true,
+                        onCheckedChange = onEligiblePourForfaitChange
+                    )
+                    Text("Éligible pour forfait", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
     }
 }
@@ -1211,6 +1356,33 @@ private fun SuccessBanner(message: String, onDismiss: () -> Unit) {
             Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Default.Close, contentDescription = "Fermer", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+        }
+    }
+}
+
+// Bandeau affiche a l'agent terrain quand le responsable accord forfait/accord a demande une
+// reprise de prise de photo (angle manquant, photo floue...) : visible sur les 3 phases agent
+// terrain, pas seulement "avant reparation". Purement informatif (pas de bouton de fermeture) :
+// l'agent doit garder le message sous les yeux tant que la reprise n'est pas terminee.
+@Composable
+private fun PhotoRetakeBanner(message: String) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(
+                    "Reprise de photo demandée",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
             }
         }
     }

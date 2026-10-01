@@ -2,6 +2,7 @@ package com.ma.sms.android.ui.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ma.sms.android.data.local.PendingUpload
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.repository.DossierRepository
 import com.ma.sms.android.ui.detail.FileToOpen
@@ -11,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -47,7 +49,19 @@ class DossierContributeViewModel(
     private val _uiState = MutableStateFlow(DossierContributeUiState())
     val uiState: StateFlow<DossierContributeUiState> = _uiState
 
-    init { loadDocuments() }
+    private var pendingUploads: List<PendingUpload> = emptyList()
+
+    init {
+        loadDocuments()
+        viewModelScope.launch {
+            repository.observePendingUploads(dossierId).collect { uploads ->
+                pendingUploads = uploads
+                _uiState.value = _uiState.value.copy(
+                    pendingPhotos = uploads.map { PendingPhoto(File(it.localFilePath), it.documentType) }
+                )
+            }
+        }
+    }
 
     fun loadDocuments() {
         viewModelScope.launch {
@@ -63,47 +77,63 @@ class DossierContributeViewModel(
         }
     }
 
-    // Ajoute une photo à la liste locale (pas encore uploadée)
+    // Met la photo en file d'attente durable (Room) : upload garanti (SyncWorker) meme si l'app
+    // est tuee avant l'upload manuel.
     fun addPendingPhoto(file: File, docType: String) {
-        val current = _uiState.value.pendingPhotos.toMutableList()
-        current.add(PendingPhoto(file, docType))
-        _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        viewModelScope.launch {
+            repository.queuePendingUpload(dossierId, file, docType)
+        }
     }
 
-    // Supprime une photo en attente
+    // Supprime une photo en attente (fichier local + ligne Room)
     fun removePendingPhoto(index: Int) {
-        val current = _uiState.value.pendingPhotos.toMutableList()
-        current.getOrNull(index)?.file?.delete()
-        current.removeAt(index)
-        _uiState.value = _uiState.value.copy(pendingPhotos = current)
+        val upload = pendingUploads.getOrNull(index) ?: return
+        viewModelScope.launch {
+            File(upload.localFilePath).delete()
+            repository.deletePendingUpload(upload.id)
+        }
     }
 
-    // Upload de toutes les photos en attente, en parallele (concurrence limitee)
+    // Upload immediat de toutes les photos en attente, en parallele (concurrence limitee) : retour
+    // visuel explicite ; SyncWorker reste le filet de securite en arriere-plan en cas d'echec ici.
     fun validateAndUpload() {
-        val pending = _uiState.value.pendingPhotos
+        val pending = pendingUploads
         if (pending.isEmpty()) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploading = true, error = null)
+            // Confirme la file d'attente AVANT la tentative immediate : si celle-ci echoue faute
+            // de reseau, SyncWorker saura qu'il est autorise a reprendre ces photos tout seul.
+            repository.confirmPendingUploads(dossierId)
             val semaphore = Semaphore(MAX_CONCURRENT_PHOTO_UPLOADS)
-            val results = pending.map { photo ->
+            val results = pending.map { upload ->
                 async(Dispatchers.IO) {
                     semaphore.withPermit {
-                        repository.uploadPhoto(dossierId, photo.file, photo.docType)
-                            .onSuccess { photo.file.delete() }
+                        repository.uploadPhoto(dossierId, File(upload.localFilePath), upload.documentType)
+                            .onSuccess {
+                                File(upload.localFilePath).delete()
+                                repository.deletePendingUpload(upload.id)
+                            }
                     }
                 }
             }.awaitAll()
-            val failed = results.count { it.isFailure }
-            if (failed == 0) {
-                _uiState.value = _uiState.value.copy(
+            val failed = results.filter { it.isFailure }
+            // Un echec par simple absence de reseau n'est pas une vraie erreur : la photo reste en
+            // file d'attente durable (Room) et SyncWorker la renverra automatiquement des que la
+            // connexion revient, sans intervention de l'agent.
+            val networkFailed = failed.count { it.exceptionOrNull() is java.io.IOException }
+            val otherFailed = failed.size - networkFailed
+            when {
+                failed.isEmpty() -> _uiState.value = _uiState.value.copy(
                     isUploading = false,
-                    pendingPhotos = emptyList(),
                     uploadSuccess = "${pending.size} photo(s) enregistrée(s) avec succès."
                 )
-            } else {
-                _uiState.value = _uiState.value.copy(
+                otherFailed == 0 -> _uiState.value = _uiState.value.copy(
                     isUploading = false,
-                    error = "$failed photo(s) n'ont pas pu être uploadées."
+                    uploadSuccess = "Hors ligne : $networkFailed photo(s) en attente, envoi automatique dès le retour du réseau."
+                )
+                else -> _uiState.value = _uiState.value.copy(
+                    isUploading = false,
+                    error = "$otherFailed photo(s) n'ont pas pu être uploadées."
                 )
             }
             loadDocuments()

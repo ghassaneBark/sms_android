@@ -15,13 +15,19 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ma.sms.android.SmsApplication
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.repository.DossierRepository
+import com.ma.sms.android.ui.components.OfflineBanner
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +47,10 @@ fun DossierListScreen(
     val state by vm.uiState.collectAsState()
     val listState = rememberLazyListState()
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val connectivityObserver = remember { (context.applicationContext as SmsApplication).connectivityObserver }
+    val isConnected by connectivityObserver.isConnected.collectAsState()
 
     // Rafraîchit la liste à chaque retour sur cet écran
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -68,25 +78,36 @@ fun DossierListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Mes dossiers") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                actions = {
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
+            Column {
+                TopAppBar(
+                    title = { Text("Mes dossiers") },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    actions = {
+                        IconButton(onClick = { vm.refresh() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
+                        }
+                        IconButton(onClick = onSearchDossiers) {
+                            Icon(Icons.Default.Search, contentDescription = "Rechercher un dossier")
+                        }
+                        IconButton(onClick = { showLogoutDialog = true }) {
+                            Icon(Icons.Default.Logout, contentDescription = "Déconnexion")
+                        }
                     }
-                    IconButton(onClick = onSearchDossiers) {
-                        Icon(Icons.Default.Search, contentDescription = "Rechercher un dossier")
-                    }
-                    IconButton(onClick = { showLogoutDialog = true }) {
-                        Icon(Icons.Default.Logout, contentDescription = "Déconnexion")
-                    }
+                )
+                if (!isConnected) OfflineBanner()
+                state.lastSyncedAt?.let { syncedAt ->
+                    Text(
+                        text = "Dernière synchronisation : ${formatSyncedAt(syncedAt)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
                 }
-            )
+            }
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewDossierExpress) {
@@ -188,6 +209,9 @@ private fun DossierCard(dossier: Dossier, onClick: () -> Unit) {
         }
     }
 }
+
+private fun formatSyncedAt(timestampMillis: Long): String =
+    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.FRANCE).format(Date(timestampMillis))
 
 private fun etapeReparationLabel(etat: String?): String? = when (etat) {
     "AFFECTATION_AGENT_TERRAIN" -> "Avant réparation"
