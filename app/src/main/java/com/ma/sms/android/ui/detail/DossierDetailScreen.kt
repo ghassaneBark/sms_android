@@ -1241,7 +1241,7 @@ private fun AssureCard(dossier: Dossier) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionTitle("Assuré")
             InfoRow("Nom", listOfNotNull(assure.nom, assure.prenom).joinToString(" ").ifBlank { null })
-            InfoRow("Téléphone", assure.telephone)
+            PhoneInfoRow("Téléphone", assure.telephone)
             InfoRow("Email", assure.email)
             InfoRow("Adresse", assure.adresse)
         }
@@ -1322,6 +1322,36 @@ private fun WarningBanner(message: String) {
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+}
+
+// Numero de telephone de l'assure : bouton d'appel direct (ACTION_DIAL, pre-remplit le
+// numero dans l'app telephone native sans demander la permission CALL_PHONE) a cote de la
+// valeur, au lieu d'un simple affichage texte.
+@Composable
+private fun PhoneInfoRow(label: String, phone: String?) {
+    if (phone.isNullOrBlank()) return
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Row(modifier = Modifier.weight(1.5f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+            Text(phone, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+            IconButton(
+                onClick = {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                        data = android.net.Uri.parse("tel:$phone")
+                    }
+                    context.startActivity(intent)
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Default.Call, contentDescription = "Appeler", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
 }
 
 @Composable
