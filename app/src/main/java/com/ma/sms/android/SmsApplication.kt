@@ -18,6 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 class SmsApplication : Application(), Configuration.Provider {
 
@@ -80,13 +83,12 @@ class SmsApplication : Application(), Configuration.Provider {
                     // callback de refreshAccessToken() — on l'intercepte ici pour afficher un message
                     // actionnable au lieu du dump de stack trace brut.
                     tokenManager.clear()
+                    val skewMinutes = measureClockSkewMinutes()
                     Intent(this, CrashActivity::class.java).apply {
                         putExtra("title", "Connexion impossible")
                         putExtra(
                             "error",
-                            "L'heure de votre téléphone semble incorrecte, ce qui empêche la connexion.\n\n" +
-                                "Veuillez vérifier les réglages \"Date et heure\" de votre téléphone " +
-                                "(activez \"Date et heure automatiques\"), puis relancez l'application."
+                            buildClockSkewMessage(skewMinutes)
                         )
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
@@ -116,6 +118,37 @@ class SmsApplication : Application(), Configuration.Provider {
             current = current.cause
         }
         return false
+    }
+
+    // Mesure l'ecart reel entre l'horloge du telephone et celle du serveur via l'en-tete HTTP
+    // "Date" (toujours present, meme sans authentification) plutot que de se contenter d'affirmer
+    // "votre horloge est fausse" sans preuve verifiable par l'utilisateur ni par nous au support.
+    // Appel synchrone a dessein : on est deja dans le crash handler, le process va etre tue juste
+    // apres de toute facon ; timeouts courts pour ne pas bloquer ce dernier instant trop longtemps.
+    private fun measureClockSkewMinutes(): Long? = runCatching {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+        val url = "${BuildConfig.KEYCLOAK_URL}/realms/${BuildConfig.KEYCLOAK_REALM}/.well-known/openid-configuration"
+        val response = client.newCall(Request.Builder().url(url).head().build()).execute()
+        val serverDate = response.headers.getDate("Date")
+        response.close()
+        serverDate?.let { (it.time - System.currentTimeMillis()) / 60_000L }
+    }.getOrNull()
+
+    private fun buildClockSkewMessage(skewMinutes: Long?): String {
+        val intro = "L'heure de votre téléphone semble incorrecte, ce qui empêche la connexion."
+        val detail = if (skewMinutes != null && kotlin.math.abs(skewMinutes) >= 1) {
+            val sens = if (skewMinutes > 0) "en retard" else "en avance"
+            "\n\nVotre téléphone est ${sens} d'environ ${kotlin.math.abs(skewMinutes)} minute(s) par rapport à l'heure du serveur."
+        } else {
+            ""
+        }
+        return intro + detail + "\n\n" +
+            "Veuillez vérifier les réglages \"Date et heure\" de votre téléphone " +
+            "(activez \"Date et heure automatiques\" ET \"Fuseau horaire automatique\"), " +
+            "puis relancez l'application."
     }
 
     // Initialisation "a la demande" de WorkManager (pas besoin de desactiver le WorkManagerInitializer
