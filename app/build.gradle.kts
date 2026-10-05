@@ -14,8 +14,8 @@ android {
         applicationId = "com.ma.sms.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 70
-        versionName = "1.1.68"
+        versionCode = 71
+        versionName = "1.1.69"
         manifestPlaceholders["appAuthRedirectScheme"] = "com.ma.sms.android"
     }
 
@@ -30,16 +30,16 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "BASE_URL", "\"https://smsproject.duckdns.org\"")
-            buildConfigField("String", "KEYCLOAK_URL", "\"https://smsproject.duckdns.org/auth\"")
+            buildConfigField("String", "BASE_URL", "\"https://smsprojectdev.duckdns.org\"")
+            buildConfigField("String", "KEYCLOAK_URL", "\"https://smsprojectdev.duckdns.org/auth\"")
             buildConfigField("String", "KEYCLOAK_REALM", "\"sms-realm\"")
             buildConfigField("String", "KEYCLOAK_CLIENT_ID", "\"sms-mobile\"")
         }
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
-            buildConfigField("String", "BASE_URL", "\"https://smsproject.duckdns.org\"")
-            buildConfigField("String", "KEYCLOAK_URL", "\"https://smsproject.duckdns.org/auth\"")
+            buildConfigField("String", "BASE_URL", "\"https://smsprojectdev.duckdns.org\"")
+            buildConfigField("String", "KEYCLOAK_URL", "\"https://smsprojectdev.duckdns.org/auth\"")
             buildConfigField("String", "KEYCLOAK_REALM", "\"sms-realm\"")
             buildConfigField("String", "KEYCLOAK_CLIENT_ID", "\"sms-mobile\"")
         }
