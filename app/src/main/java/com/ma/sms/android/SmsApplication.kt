@@ -73,9 +73,28 @@ class SmsApplication : Application(), Configuration.Provider {
     private fun installCrashHandler() {
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             try {
-                val intent = Intent(this, CrashActivity::class.java).apply {
-                    putExtra("error", throwable.stackTraceToString())
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val intent = if (isClockSkewAuthError(throwable)) {
+                    // AppAuth-Android relance cette erreur de validation du jeton (iat trop eloigne
+                    // de l'heure locale, signe que l'horloge du telephone est mal reglee) comme une
+                    // exception non rattrapee depuis AsyncTask plutot que de la livrer proprement au
+                    // callback de refreshAccessToken() — on l'intercepte ici pour afficher un message
+                    // actionnable au lieu du dump de stack trace brut.
+                    tokenManager.clear()
+                    Intent(this, CrashActivity::class.java).apply {
+                        putExtra("title", "Connexion impossible")
+                        putExtra(
+                            "error",
+                            "L'heure de votre téléphone semble incorrecte, ce qui empêche la connexion.\n\n" +
+                                "Veuillez vérifier les réglages \"Date et heure\" de votre téléphone " +
+                                "(activez \"Date et heure automatiques\"), puis relancez l'application."
+                        )
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                } else {
+                    Intent(this, CrashActivity::class.java).apply {
+                        putExtra("error", throwable.stackTraceToString())
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
                 }
                 startActivity(intent)
             } catch (e: Throwable) {
@@ -85,6 +104,18 @@ class SmsApplication : Application(), Configuration.Provider {
                 kotlin.system.exitProcess(1)
             }
         }
+    }
+
+    private fun isClockSkewAuthError(throwable: Throwable): Boolean {
+        var current: Throwable? = throwable
+        while (current != null) {
+            val message = current.message ?: ""
+            if (message.contains("Issued at time is more than", ignoreCase = true)) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     // Initialisation "a la demande" de WorkManager (pas besoin de desactiver le WorkManagerInitializer

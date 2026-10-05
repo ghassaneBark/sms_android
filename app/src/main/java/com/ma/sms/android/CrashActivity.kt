@@ -22,9 +22,10 @@ class CrashActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val error = intent.getStringExtra("error") ?: "Erreur inconnue"
+        val titleText = intent.getStringExtra("title") ?: "L'application a rencontré une erreur (mode diagnostic)"
 
         val title = TextView(this).apply {
-            text = "L'application a rencontré une erreur (mode diagnostic)"
+            text = titleText
             textSize = 18f
             setPadding(32, 48, 32, 16)
             gravity = Gravity.CENTER
