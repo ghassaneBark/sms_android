@@ -55,7 +55,8 @@ class SmsApplication : Application(), Configuration.Provider {
             this,
             appDatabase.pendingUploadDao(),
             appDatabase.cachedDossierDao(),
-            appDatabase.cachedAntenneDossierDao()
+            appDatabase.cachedAntenneDossierDao(),
+            appDatabase.cachedPhotoRetakeRequestDao()
         )
         fcmRepository = FcmTokenRepository(apiService)
         connectivityObserver = ConnectivityObserver(this)

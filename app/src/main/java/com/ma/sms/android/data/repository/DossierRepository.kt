@@ -8,6 +8,8 @@ import com.ma.sms.android.data.local.CachedAntenneDossier
 import com.ma.sms.android.data.local.CachedAntenneDossierDao
 import com.ma.sms.android.data.local.CachedDossier
 import com.ma.sms.android.data.local.CachedDossierDao
+import com.ma.sms.android.data.local.CachedPhotoRetakeRequestDao
+import com.ma.sms.android.data.local.CachedPhotoRetakeRequests
 import com.ma.sms.android.data.local.PendingUpload
 import com.ma.sms.android.data.local.PendingUploadDao
 import com.ma.sms.android.data.local.PendingUploadStatus
@@ -37,7 +39,8 @@ class DossierRepository(
     private val context: Context,
     private val pendingUploadDao: PendingUploadDao,
     private val cachedDossierDao: CachedDossierDao,
-    private val cachedAntenneDossierDao: CachedAntenneDossierDao
+    private val cachedAntenneDossierDao: CachedAntenneDossierDao,
+    private val cachedPhotoRetakeRequestDao: CachedPhotoRetakeRequestDao
 ) {
 
     private val gson = Gson()
@@ -274,7 +277,27 @@ class DossierRepository(
      */
     suspend fun getPhotoRetakeRequests(dossierId: Long): Result<List<PhotoRetakeRequest>> = runCatching {
         api.getPhotoRetakeRequests(dossierId)
+    }.onSuccess { requests ->
+        cachedPhotoRetakeRequestDao.insert(
+            CachedPhotoRetakeRequests(
+                dossierId = dossierId,
+                requestsJson = gson.toJson(requests),
+                cachedAt = System.currentTimeMillis()
+            )
+        )
     }
+
+    /**
+     * Repli hors-ligne : derniere liste connue des demandes de reprise photo pour ce dossier, pour
+     * pouvoir determiner si une reprise est en attente meme sans reseau (cf. getCachedDossier).
+     * Retourne null si jamais mise en cache (pas de distinction avec "liste vide connue").
+     */
+    suspend fun getCachedPhotoRetakeRequests(dossierId: Long): List<PhotoRetakeRequest>? =
+        cachedPhotoRetakeRequestDao.getByDossierId(dossierId)?.let { cached ->
+            runCatching {
+                gson.fromJson(cached.requestsJson, Array<PhotoRetakeRequest>::class.java).toList()
+            }.getOrNull()
+        }
 
     /** Fil de messages du dossier (meme fonctionnalite que le chat deja affiche sur le web). */
     suspend fun getDossierMessages(dossierId: Long): Result<List<DossierMessage>> = runCatching {

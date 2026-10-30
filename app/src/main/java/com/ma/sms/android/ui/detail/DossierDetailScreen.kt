@@ -334,7 +334,12 @@ fun DossierDetailScreen(
 
     val etat = state.dossier?.etat
     val isPhotoFinReparationState = etat == "ATTENTE_PHOTO_FIN_REPARATION"
-    val requiredAnglesDone = allRequiredAnglesDoneForState(etat, state.documents)
+    // Reprise photo en attente : le croquis (CarDiagramCard) est masque (cf. plus bas), seule la
+    // capture libre via "photos supplementaires" reste proposee -> exiger quand meme tous les
+    // angles obligatoires bloquerait definitivement "Fin de mission", puisqu'il n'y a plus moyen
+    // de les prendre.
+    val requiredAnglesDone = allRequiredAnglesDoneForState(etat, state.documents) ||
+        state.pendingPhotoRetakeRequest != null
     val hasPending = state.pendingPhotos.isNotEmpty()
 
     if (showFinMissionDialog) {
