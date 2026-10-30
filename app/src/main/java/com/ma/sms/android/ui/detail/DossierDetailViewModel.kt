@@ -116,6 +116,7 @@ class DossierDetailViewModel(
                             isLoading = false,
                             error = "Hors ligne — données peut-être non à jour."
                         )
+                        loadPendingPhotoRetakeRequest(cached.etat)
                     } else {
                         // Diagnostic temporaire : affiche l'etat du cache pour comprendre pourquoi
                         // le repli hors ligne echoue (a retirer une fois le bug identifie).
@@ -144,6 +145,14 @@ class DossierDetailViewModel(
             repository.getPhotoRetakeRequests(dossierId)
                 .onSuccess { requests ->
                     val pending = requests.firstOrNull { it.resolvedAt == null && it.phase == currentEtat }
+                    _uiState.value = _uiState.value.copy(pendingPhotoRetakeRequest = pending)
+                }
+                .onFailure {
+                    // Hors ligne : derniere liste connue (cf. getCachedDossier) plutot que de
+                    // retomber silencieusement sur "aucune reprise en cours" et afficher a tort le
+                    // croquis alors qu'une reprise est bien en attente cote serveur.
+                    val cached = repository.getCachedPhotoRetakeRequests(dossierId)
+                    val pending = cached?.firstOrNull { it.resolvedAt == null && it.phase == currentEtat }
                     _uiState.value = _uiState.value.copy(pendingPhotoRetakeRequest = pending)
                 }
         }

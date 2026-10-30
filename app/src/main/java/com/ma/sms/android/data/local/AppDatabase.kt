@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [PendingUpload::class, CachedDossier::class, CachedAntenneDossier::class],
-    version = 3,
+    entities = [PendingUpload::class, CachedDossier::class, CachedAntenneDossier::class, CachedPhotoRetakeRequests::class],
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -15,6 +15,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pendingUploadDao(): PendingUploadDao
     abstract fun cachedDossierDao(): CachedDossierDao
     abstract fun cachedAntenneDossierDao(): CachedAntenneDossierDao
+    abstract fun cachedPhotoRetakeRequestDao(): CachedPhotoRetakeRequestDao
 
     companion object {
         @Volatile

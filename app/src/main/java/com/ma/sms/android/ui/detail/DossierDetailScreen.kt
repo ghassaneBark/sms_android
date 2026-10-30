@@ -334,7 +334,12 @@ fun DossierDetailScreen(
 
     val etat = state.dossier?.etat
     val isPhotoFinReparationState = etat == "ATTENTE_PHOTO_FIN_REPARATION"
-    val requiredAnglesDone = allRequiredAnglesDoneForState(etat, state.documents)
+    // Reprise photo en attente : le croquis (CarDiagramCard) est masque (cf. plus bas), seule la
+    // capture libre via "photos supplementaires" reste proposee -> exiger quand meme tous les
+    // angles obligatoires bloquerait definitivement "Fin de mission", puisqu'il n'y a plus moyen
+    // de les prendre.
+    val requiredAnglesDone = allRequiredAnglesDoneForState(etat, state.documents) ||
+        state.pendingPhotoRetakeRequest != null
     val hasPending = state.pendingPhotos.isNotEmpty()
 
     if (showFinMissionDialog) {
@@ -1401,19 +1406,17 @@ private fun PhotoRetakeBanner(message: String) {
         Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(Modifier.width(8.dp))
-            Column {
-                Text(
-                    "Reprise de photo demandée",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                Text(
-                    message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-            }
+            // Le message (toujours genere automatiquement cote backend, cf.
+            // DossierService.demanderRepriseDossierPhotos) contient deja "Reprise de photo
+            // demandee (<phase>)." : un titre fixe reprenant la meme phrase au-dessus faisait
+            // doublon ("Reprise de photo demandee" + "Reprise de photo demandee (apres
+            // reparation)."). On affiche donc uniquement ce message, en gras.
+            Text(
+                message,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
         }
     }
 }
