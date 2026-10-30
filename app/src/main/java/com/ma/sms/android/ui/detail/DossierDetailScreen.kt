@@ -1401,19 +1401,17 @@ private fun PhotoRetakeBanner(message: String) {
         Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(Modifier.width(8.dp))
-            Column {
-                Text(
-                    "Reprise de photo demandée",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                Text(
-                    message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-            }
+            // Le message (toujours genere automatiquement cote backend, cf.
+            // DossierService.demanderRepriseDossierPhotos) contient deja "Reprise de photo
+            // demandee (<phase>)." : un titre fixe reprenant la meme phrase au-dessus faisait
+            // doublon ("Reprise de photo demandee" + "Reprise de photo demandee (apres
+            // reparation)."). On affiche donc uniquement ce message, en gras.
+            Text(
+                message,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
         }
     }
 }
