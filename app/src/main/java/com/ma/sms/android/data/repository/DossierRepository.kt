@@ -15,6 +15,7 @@ import com.ma.sms.android.data.local.PendingUploadDao
 import com.ma.sms.android.data.local.PendingUploadStatus
 import com.ma.sms.android.data.model.AgentTerrainUser
 import com.ma.sms.android.data.model.Assurance
+import com.ma.sms.android.data.model.ContactAssureStatut
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
@@ -24,6 +25,7 @@ import com.ma.sms.android.data.model.DossierMessageCreateRequest
 import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PhotoRetakeRequest
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.TentativeContactRequest
 import com.ma.sms.android.data.model.VehiculeExtraction
 import com.ma.sms.android.sync.SyncScheduler
 import kotlinx.coroutines.flow.Flow
@@ -45,8 +47,8 @@ class DossierRepository(
 
     private val gson = Gson()
 
-    suspend fun getDossiers(): Result<List<Dossier>> = runCatching {
-        api.getDossiers()
+    suspend fun getDossiers(includeInjoignable: Boolean = false): Result<List<Dossier>> = runCatching {
+        api.getDossiers(includeInjoignable)
     }
 
     /**
@@ -119,6 +121,18 @@ class DossierRepository(
         val fileBody = compressed.asRequestBody("image/jpeg".toMediaType())
         val filePart = MultipartBody.Part.createFormData("file", fileName, fileBody)
         api.uploadDocument(dossierId, typeBody, filePart)
+    }
+
+    // Upload generique (sans la compression JPEG de uploadPhoto, qui ne convient pas a un PDF ou
+    // une image autre qu'une photo vehicule) : utilise par exemple pour la piece justificative
+    // optionnelle d'une tentative de contact assuré.
+    suspend fun uploadDocument(dossierId: Long, file: File, type: String, mimeType: String): Result<DocumentSinistre> = runCatching {
+        val typeBody = type.toRequestBody("text/plain".toMediaType())
+        val fileBody = file.asRequestBody(mimeType.toMediaType())
+        val filePart = MultipartBody.Part.createFormData("file", file.name, fileBody)
+        api.uploadDocument(dossierId, typeBody, filePart)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
     }
 
     private fun slugify(text: String): String = text.lowercase()
@@ -260,6 +274,32 @@ class DossierRepository(
         api.reassignAgentTerrain(dossierId, ReassignAgentTerrainRequest(newAgentTerrainUserId))
     }.recoverCatching { throwable ->
         throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun logTentativeContact(dossierId: Long, resultat: String, commentaire: String?, documentId: Long? = null): Result<Dossier> = runCatching {
+        api.logTentativeContact(dossierId, TentativeContactRequest(resultat, commentaire, documentId))
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun getContactAssureStatut(dossierId: Long): Result<ContactAssureStatut> = runCatching {
+        api.getContactAssureStatut(dossierId)
+    }
+
+    suspend fun marquerInjoignable(dossierId: Long): Result<Dossier> = runCatching {
+        api.marquerInjoignable(dossierId)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun reprendreContact(dossierId: Long): Result<Dossier> = runCatching {
+        api.reprendreContact(dossierId)
+    }.recoverCatching { throwable ->
+        throw extractBusinessMessageOrRethrow(throwable)
+    }
+
+    suspend fun getContactAssureStates(): Result<List<String>> = runCatching {
+        api.getContactAssureStates()
     }
 
     /** Extrait les champs vehicule depuis la carte grise deja televersee sur le dossier (IA vision). */

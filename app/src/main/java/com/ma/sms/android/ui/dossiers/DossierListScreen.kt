@@ -99,6 +99,21 @@ fun DossierListScreen(
                     }
                 )
                 if (!isConnected) OfflineBanner()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Afficher les dossiers injoignables",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Switch(
+                        checked = state.includeInjoignable,
+                        onCheckedChange = { vm.toggleIncludeInjoignable(it) }
+                    )
+                }
                 state.lastSyncedAt?.let { syncedAt ->
                     Text(
                         text = "Dernière synchronisation : ${formatSyncedAt(syncedAt)}",
@@ -173,6 +188,16 @@ private fun DossierCard(dossier: Dossier, onClick: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 EtatChip(etat = dossier.etat)
+            }
+
+            if (dossier.injoignable) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    contentColor = MaterialTheme.colorScheme.error
+                ) {
+                    Text("Injoignable", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+                }
             }
 
             etapeReparationLabel(dossier.etat)?.let { etape ->

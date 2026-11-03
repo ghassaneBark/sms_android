@@ -2,6 +2,7 @@ package com.ma.sms.android.data.api
 
 import com.ma.sms.android.data.model.AgentTerrainUser
 import com.ma.sms.android.data.model.Assurance
+import com.ma.sms.android.data.model.ContactAssureStatut
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierExpressCreateRequest
@@ -12,6 +13,7 @@ import com.ma.sms.android.data.model.Intermediaire
 import com.ma.sms.android.data.model.PageResponse
 import com.ma.sms.android.data.model.PhotoRetakeRequest
 import com.ma.sms.android.data.model.ReassignAgentTerrainRequest
+import com.ma.sms.android.data.model.TentativeContactRequest
 import com.ma.sms.android.data.model.VehiculeExtraction
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
@@ -22,7 +24,7 @@ import retrofit2.http.*
 interface ApiService {
 
     @GET("api/dossier")
-    suspend fun getDossiers(): List<Dossier>
+    suspend fun getDossiers(@Query("includeInjoignable") includeInjoignable: Boolean): List<Dossier>
 
     @GET("api/dossier")
     suspend fun getDossiersWithScope(@Query("scope") scope: String): List<Dossier>
@@ -70,6 +72,21 @@ interface ApiService {
         @Path("id") id: Long,
         @Body body: ReassignAgentTerrainRequest
     ): Dossier
+
+    @POST("api/dossier/{id}/tentative-contact")
+    suspend fun logTentativeContact(@Path("id") id: Long, @Body body: TentativeContactRequest): Dossier
+
+    @GET("api/dossier/{id}/contact-assure/statut")
+    suspend fun getContactAssureStatut(@Path("id") id: Long): ContactAssureStatut
+
+    @POST("api/dossier/{id}/marquer-injoignable")
+    suspend fun marquerInjoignable(@Path("id") id: Long): Dossier
+
+    @POST("api/dossier/{id}/reprendre-contact")
+    suspend fun reprendreContact(@Path("id") id: Long): Dossier
+
+    @GET("api/dossier/contact-assure-states")
+    suspend fun getContactAssureStates(): List<String>
 
     @POST("api/dossier/{id}/ai/extract-vehicule")
     suspend fun extractVehiculeFromCarteGrise(@Path("id") id: Long): VehiculeExtraction

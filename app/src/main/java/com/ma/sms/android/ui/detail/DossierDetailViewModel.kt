@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ma.sms.android.data.local.PendingUpload
 import com.ma.sms.android.data.model.AgentTerrainUser
+import com.ma.sms.android.data.model.ContactAssureStatut
 import com.ma.sms.android.data.model.Devis
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DocumentSinistre
@@ -55,7 +56,14 @@ data class DossierDetailUiState(
     // tout autre moment), visible ici des l'ouverture du dossier.
     val messages: List<DossierMessage> = emptyList(),
     val isLoadingMessages: Boolean = false,
-    val isSendingMessage: Boolean = false
+    val isSendingMessage: Boolean = false,
+    // Statut "assure injoignable" (relance telephonique avant prise de photos) : chargé en
+    // parallèle du dossier, piloté par DossierDetailViewModel.loadContactAssureStatut/States.
+    val contactAssureStatut: ContactAssureStatut? = null,
+    val contactAssureStates: List<String> = emptyList(),
+    val isLoggingTentativeContact: Boolean = false,
+    val isMarquingInjoignable: Boolean = false,
+    val isReprenantContact: Boolean = false
 )
 
 data class FileToOpen(val uri: Uri, val mimeType: String)
@@ -100,6 +108,8 @@ class DossierDetailViewModel(
                     loadDocuments()
                     loadPendingPhotoRetakeRequest(dossier.etat)
                     loadMessages()
+                    loadContactAssureStatut()
+                    loadContactAssureStates()
                     // En cours/après réparation : charger le dernier devis VALIDE pour l'afficher en mode light
                     if (dossier.etat == "ATTENTE_EXPERTISE_SR" || dossier.etat == "ATTENTE_PHOTO_FIN_REPARATION") {
                         loadLastValidDevis()
@@ -193,6 +203,87 @@ class DossierDetailViewModel(
         viewModelScope.launch {
             repository.getLastValidDevis(dossierId)
                 .onSuccess { devis -> _uiState.value = _uiState.value.copy(lastValidDevis = devis) }
+        }
+    }
+
+    fun loadContactAssureStatut() {
+        viewModelScope.launch {
+            repository.getContactAssureStatut(dossierId)
+                .onSuccess { statut -> _uiState.value = _uiState.value.copy(contactAssureStatut = statut) }
+        }
+    }
+
+    fun loadContactAssureStates() {
+        viewModelScope.launch {
+            repository.getContactAssureStates()
+                .onSuccess { states -> _uiState.value = _uiState.value.copy(contactAssureStates = states) }
+        }
+    }
+
+    fun logTentativeContact(resultat: String, commentaire: String?, justificatifFile: File? = null) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoggingTentativeContact = true, error = null)
+            var documentId: Long? = null
+            if (justificatifFile != null) {
+                val extension = justificatifFile.extension
+                val mimeType = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+                    ?: "application/octet-stream"
+                repository.uploadDocument(dossierId, justificatifFile, "Justificatif appel", mimeType)
+                    .onSuccess { documentId = it.id }
+                    .onFailure {
+                        val msg = it.message?.takeIf { m -> m.isNotBlank() }
+                            ?: "Impossible d'envoyer la pièce justificative."
+                        _uiState.value = _uiState.value.copy(isLoggingTentativeContact = false, error = msg)
+                        return@launch
+                    }
+            }
+            repository.logTentativeContact(dossierId, resultat, commentaire, documentId)
+                .onSuccess { dossier ->
+                    _uiState.value = _uiState.value.copy(dossier = dossier, isLoggingTentativeContact = false)
+                    loadContactAssureStatut()
+                }
+                .onFailure {
+                    val msg = it.message?.takeIf { m -> m.isNotBlank() }
+                        ?: "Impossible d'enregistrer la tentative de contact."
+                    _uiState.value = _uiState.value.copy(isLoggingTentativeContact = false, error = msg)
+                }
+        }
+    }
+
+    fun marquerInjoignable() {
+        if (_uiState.value.contactAssureStatut?.peutMarquerInjoignable != true) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isMarquingInjoignable = true, error = null)
+            repository.marquerInjoignable(dossierId)
+                .onSuccess { dossier ->
+                    _uiState.value = _uiState.value.copy(
+                        dossier = dossier,
+                        isMarquingInjoignable = false,
+                        uploadSuccess = "Dossier marqué injoignable. L'intermédiaire a été informé."
+                    )
+                    loadContactAssureStatut()
+                }
+                .onFailure {
+                    val msg = it.message?.takeIf { m -> m.isNotBlank() }
+                        ?: "Impossible de marquer ce dossier injoignable."
+                    _uiState.value = _uiState.value.copy(isMarquingInjoignable = false, error = msg)
+                }
+        }
+    }
+
+    fun reprendreContact() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isReprenantContact = true, error = null)
+            repository.reprendreContact(dossierId)
+                .onSuccess { dossier ->
+                    _uiState.value = _uiState.value.copy(dossier = dossier, isReprenantContact = false)
+                    loadContactAssureStatut()
+                }
+                .onFailure {
+                    val msg = it.message?.takeIf { m -> m.isNotBlank() }
+                        ?: "Impossible de reprendre le contact."
+                    _uiState.value = _uiState.value.copy(isReprenantContact = false, error = msg)
+                }
         }
     }
 

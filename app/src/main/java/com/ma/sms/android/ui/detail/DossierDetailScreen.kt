@@ -2,6 +2,7 @@ package com.ma.sms.android.ui.detail
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -29,6 +30,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.rememberAsyncImagePainter
 import com.ma.sms.android.SmsApplication
+import com.ma.sms.android.data.model.ContactAssureStatut
 import com.ma.sms.android.data.model.DocumentSinistre
 import com.ma.sms.android.data.model.Dossier
 import com.ma.sms.android.data.model.DossierMessage
@@ -276,6 +278,11 @@ fun DossierDetailScreen(
     var showFinMissionDialog by remember { mutableStateOf(false) }
     var showReassignDialog by remember { mutableStateOf(false) }
     var messageDraft by remember { mutableStateOf("") }
+    var contactCommentaireDraft by remember { mutableStateOf("") }
+    var contactJustificatifFile by remember { mutableStateOf<File?>(null) }
+    val contactJustificatifPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) contactJustificatifFile = copyUriToCacheFile(context, uri)
+    }
 
     // File d'attente de captures pour l'ecran camera integre (CameraX) :
     // permet d'enchainer plusieurs photos sans quitter l'ecran de l'appli.
@@ -619,6 +626,29 @@ fun DossierDetailScreen(
                             }
                         }
 
+                        if (state.dossier?.injoignable == true || state.contactAssureStates.contains(etat)) {
+                            ContactAssureCard(
+                                dossier = state.dossier,
+                                statut = state.contactAssureStatut,
+                                commentaireDraft = contactCommentaireDraft,
+                                onCommentaireDraftChange = { contactCommentaireDraft = it },
+                                justificatifFile = contactJustificatifFile,
+                                onPickJustificatif = { contactJustificatifPicker.launch("*/*") },
+                                onClearJustificatif = { contactJustificatifFile = null },
+                                isLoggingTentativeContact = state.isLoggingTentativeContact,
+                                isMarquingInjoignable = state.isMarquingInjoignable,
+                                isReprenantContact = state.isReprenantContact,
+                                onLogTentativeContact = { resultat ->
+                                    vm.logTentativeContact(resultat, contactCommentaireDraft.ifBlank { null }, contactJustificatifFile)
+                                    contactCommentaireDraft = ""
+                                    contactJustificatifFile = null
+                                },
+                                onMarquerInjoignable = { vm.marquerInjoignable() },
+                                onReprendreContact = { vm.reprendreContact() },
+                                onViewDocument = { vm.viewDocument(it) }
+                            )
+                        }
+
                         DossierMessagesCard(
                             messages = state.messages,
                             isLoading = state.isLoadingMessages,
@@ -719,6 +749,169 @@ private fun DossierMessagesCard(
     }
 }
 
+// --- Contact assuré (relance téléphonique avant prise de photos) ---
+@Composable
+private fun ContactAssureCard(
+    dossier: Dossier?,
+    statut: ContactAssureStatut?,
+    commentaireDraft: String,
+    onCommentaireDraftChange: (String) -> Unit,
+    justificatifFile: File?,
+    onPickJustificatif: () -> Unit,
+    onClearJustificatif: () -> Unit,
+    isLoggingTentativeContact: Boolean,
+    isMarquingInjoignable: Boolean,
+    isReprenantContact: Boolean,
+    onLogTentativeContact: (String) -> Unit,
+    onMarquerInjoignable: () -> Unit,
+    onReprendreContact: () -> Unit,
+    onViewDocument: (com.ma.sms.android.data.model.DocumentSinistre) -> Unit
+) {
+    if (dossier == null) return
+    Card {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.Call, contentDescription = null)
+                Text("Contact assuré", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+
+            if (dossier.injoignable) {
+                WarningBanner(
+                    "Assuré injoignable depuis le ${formatMessageDate(dossier.dateInjoignable)}. " +
+                        "L'intermédiaire a été informé et doit nous prévenir une fois l'assuré recontacté."
+                )
+                Button(
+                    onClick = onReprendreContact,
+                    enabled = !isReprenantContact,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isReprenantContact) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(4.dp))
+                        Text("En cours...")
+                    } else {
+                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Assuré recontacté")
+                    }
+                }
+            } else {
+                if (statut != null) {
+                    Text(
+                        "Tentatives sans réponse sur des jours consécutifs : ${statut.joursConsecutifsSansReponse} / ${statut.nombreRelanceRequis}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = commentaireDraft,
+                        onValueChange = onCommentaireDraftChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Commentaire (optionnel)") },
+                        singleLine = true
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onPickJustificatif, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            justificatifFile?.name ?: "Ajouter une pièce justificative",
+                            maxLines = 1
+                        )
+                    }
+                    if (justificatifFile != null) {
+                        IconButton(onClick = onClearJustificatif) {
+                            Icon(Icons.Default.Close, contentDescription = "Retirer la pièce jointe", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onLogTentativeContact("REPONDU") },
+                        enabled = !isLoggingTentativeContact,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Répondu")
+                    }
+                    OutlinedButton(
+                        onClick = { onLogTentativeContact("SANS_REPONSE") },
+                        enabled = !isLoggingTentativeContact,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Sans réponse")
+                    }
+                }
+
+                Button(
+                    onClick = onMarquerInjoignable,
+                    enabled = statut?.peutMarquerInjoignable == true && !isMarquingInjoignable,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    if (isMarquingInjoignable) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onError)
+                        Spacer(Modifier.width(4.dp))
+                        Text("En cours...")
+                    } else {
+                        Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Marquer injoignable")
+                    }
+                }
+                if (statut != null && !statut.peutMarquerInjoignable) {
+                    Text(
+                        "Nécessite ${statut.nombreRelanceRequis} jours calendaires consécutifs de tentatives sans réponse.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            val tentatives = dossier.tentativesContact
+            if (!tentatives.isNullOrEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    tentatives.forEach { t ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    "${formatMessageDate(t.date)} — ${if (t.resultat == "REPONDU") "Répondu" else "Sans réponse"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                if (!t.commentaire.isNullOrBlank()) {
+                                    Text(t.commentaire, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                t.document?.let { doc ->
+                                    TextButton(onClick = { onViewDocument(doc) }, contentPadding = PaddingValues(0.dp)) {
+                                        Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            doc.originalFileName ?: doc.fileName ?: "Pièce jointe",
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun formatMessageDate(raw: String?): String {
     if (raw.isNullOrBlank()) return ""
     return try {
@@ -726,6 +919,23 @@ private fun formatMessageDate(raw: String?): String {
         parsed.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
     } catch (e: Exception) {
         raw
+    }
+}
+
+// Copie le contenu d'un Uri picke (galerie/fichiers, content provider) dans un fichier cache
+// local : l'upload multipart a besoin d'un java.io.File, pas d'un Uri de content provider.
+private fun copyUriToCacheFile(context: android.content.Context, uri: Uri): File? {
+    return try {
+        val mimeType = context.contentResolver.getType(uri)
+        val extension = mimeType?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+        val fileName = "justificatif_${System.currentTimeMillis()}" + (extension?.let { ".$it" } ?: "")
+        val dest = File(context.cacheDir, fileName)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        }
+        dest
+    } catch (e: Exception) {
+        null
     }
 }
 

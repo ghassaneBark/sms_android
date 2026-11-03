@@ -14,7 +14,10 @@ data class DossierListUiState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
-    val lastSyncedAt: Long? = null
+    val lastSyncedAt: Long? = null,
+    // Par defaut, les dossiers injoignables (relance assure sans reponse) sont masques - meme
+    // defaut que le backend (scope "mine") et que le web.
+    val includeInjoignable: Boolean = false
 )
 
 class DossierListViewModel(private val repository: DossierRepository) : ViewModel() {
@@ -34,10 +37,15 @@ class DossierListViewModel(private val repository: DossierRepository) : ViewMode
         loadDossiers()
     }
 
+    fun toggleIncludeInjoignable(value: Boolean) {
+        _uiState.value = _uiState.value.copy(includeInjoignable = value)
+        loadDossiers()
+    }
+
     fun loadDossiers() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            repository.getDossiers()
+            repository.getDossiers(_uiState.value.includeInjoignable)
                 .onSuccess { dossiers ->
                     repository.cacheDossierList(dossiers)
                     _uiState.value = _uiState.value.copy(
@@ -62,7 +70,7 @@ class DossierListViewModel(private val repository: DossierRepository) : ViewMode
     fun refresh() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isRefreshing = true, error = null)
-            repository.getDossiers()
+            repository.getDossiers(_uiState.value.includeInjoignable)
                 .onSuccess { dossiers ->
                     repository.cacheDossierList(dossiers)
                     _uiState.value = _uiState.value.copy(
