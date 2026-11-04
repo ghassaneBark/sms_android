@@ -831,15 +831,6 @@ private fun ContactAssureCard(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { onLogTentativeContact("REPONDU") },
-                        enabled = !isLoggingTentativeContact,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Répondu")
-                    }
-                    OutlinedButton(
                         onClick = { onLogTentativeContact("SANS_REPONSE") },
                         enabled = !isLoggingTentativeContact,
                         modifier = Modifier.weight(1f)
