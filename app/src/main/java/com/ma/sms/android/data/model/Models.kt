@@ -36,7 +36,35 @@ data class Dossier(
     // Modifiable par l'agent terrain uniquement a l'etat AFFECTATION_AGENT_TERRAIN (cf.
     // DossierDetailScreen) : pilote le routage EN_ATTENTE_ACCORD_FORFAIT vs EN_ATTENTE_ACCORD
     // cote backend des la fin de cette phase.
-    val eligiblePourForfait: Boolean? = null
+    val eligiblePourForfait: Boolean? = null,
+    // Statut "assure injoignable" (relance telephonique avant prise de photos) : jamais modifie
+    // par les transitions d'etat normales (etat ci-dessus), cf. backend DossierService.
+    val injoignable: Boolean = false,
+    val dateInjoignable: String? = null,
+    val tentativesContact: List<TentativeContactAssure>? = null
+)
+
+data class TentativeContactAssure(
+    val id: Long? = null,
+    val date: String? = null,
+    val utilisateur: String? = null,
+    val resultat: String, // "REPONDU" | "SANS_REPONSE"
+    val commentaire: String? = null,
+    val document: DocumentSinistre? = null
+)
+
+data class TentativeContactRequest(
+    val resultat: String,
+    val commentaire: String? = null,
+    val documentId: Long? = null
+)
+
+data class ContactAssureStatut(
+    val joursConsecutifsSansReponse: Int,
+    val nombreRelanceRequis: Int = 3,
+    val peutMarquerInjoignable: Boolean,
+    val injoignable: Boolean,
+    val dateInjoignable: String? = null
 )
 
 data class DossierMessage(
