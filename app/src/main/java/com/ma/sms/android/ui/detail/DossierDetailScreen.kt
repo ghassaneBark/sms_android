@@ -798,7 +798,7 @@ private fun ContactAssureCard(
             } else {
                 if (statut != null) {
                     Text(
-                        "Tentatives sans réponse sur des jours consécutifs : ${statut.joursConsecutifsSansReponse} / ${statut.nombreRelanceRequis}",
+                        "Jours de tentatives sans réponse : ${statut.nombreJoursSansReponse} / ${statut.nombreRelanceRequis}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -859,7 +859,7 @@ private fun ContactAssureCard(
                 }
                 if (statut != null && !statut.peutMarquerInjoignable) {
                     Text(
-                        "Nécessite ${statut.nombreRelanceRequis} jours calendaires consécutifs de tentatives sans réponse.",
+                        "Nécessite ${statut.nombreRelanceRequis} jours calendaires de tentatives sans réponse.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

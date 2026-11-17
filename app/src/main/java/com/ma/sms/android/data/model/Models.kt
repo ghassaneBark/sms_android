@@ -60,7 +60,7 @@ data class TentativeContactRequest(
 )
 
 data class ContactAssureStatut(
-    val joursConsecutifsSansReponse: Int,
+    val nombreJoursSansReponse: Int,
     val nombreRelanceRequis: Int = 3,
     val peutMarquerInjoignable: Boolean,
     val injoignable: Boolean,
