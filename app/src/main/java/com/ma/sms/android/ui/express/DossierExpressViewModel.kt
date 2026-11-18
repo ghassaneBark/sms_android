@@ -621,15 +621,16 @@ class DossierExpressViewModel(
             _uiState.value = _uiState.value.copy(isSubmittingForfait = true, error = null, forfaitResult = null)
 
             // Proposition + reponse ensemble, dans la meme entree AccordForfait. Motif de rejet
-            // uniquement pertinent en cas de refus (ignore/vide sinon).
+            // uniquement pertinent en cas de refus (ignore/vide sinon). On renvoie l'historique
+            // existant (dossier.accordForfaits, tel que lu depuis le serveur) complete de cette
+            // nouvelle entree : le backend rejette un PUT dont la liste accordForfaits est plus
+            // courte que l'historique deja persiste (DossierService.applyAccordForfaitsFromDto).
             val proposalDossier = dossier.copy(
-                accordForfaits = listOf(
-                    AccordForfait(
-                        typeAccord = "FORFAIT",
-                        montantForfait = montant,
-                        reponseAssureForfait = reponse,
-                        motifRejetForfait = if (!reponse) state.motifRejetForfait.ifBlank { null } else null
-                    )
+                accordForfaits = (dossier.accordForfaits ?: emptyList()) + AccordForfait(
+                    typeAccord = "FORFAIT",
+                    montantForfait = montant,
+                    reponseAssureForfait = reponse,
+                    motifRejetForfait = if (!reponse) state.motifRejetForfait.ifBlank { null } else null
                 )
             )
             val putResult = repository.updateDossier(dossierId, proposalDossier)
